@@ -10,8 +10,8 @@ from __future__ import division
 import numpy as np
 import tensorflow as tf
 
-from utils.ffnetwork import FFNetwork
-from utils.network import Network
+from FFnetwork.ffnetwork import FFNetwork
+from FFnetwork.network import Network
 
 
 class NetworkNIM(Network):
