@@ -74,6 +74,7 @@ class NetworkNIM(Network):
             init_type='trunc_normal',
             learning_alg='lbfgs',
             learning_rate=1e-3,
+            reg_initializer=None,
             use_batches=False,
             tf_seed=0,
             use_gpu=None):
@@ -110,6 +111,7 @@ class NetworkNIM(Network):
                 ['lbfgs'] | 'adam'
             learning_rate (float, optional): learning rate used by the 
                 gradient descent-based optimizers ('adam'). Default is 1e-3.
+            reg_initializer (dict): 
             use_batches (boolean, optional): determines how data is fed to 
                 model; if False, all data is pinned to variables used 
                 throughout fitting; if True, a data slicer and batcher are 
@@ -149,11 +151,11 @@ class NetworkNIM(Network):
 
         # Establish positivity constraints
         pos_constraint = [False]*(len(layer_sizes)-1)
-        Ninh_layers = [0]*(len(layer_sizes)-1)
+        num_inh_layers = [0]*(len(layer_sizes)-1)
         for nn in range(len(ei_layers)):
             if ei_layers[nn] >= 0:
                 pos_constraint[nn+1] = True
-                Ninh_layers[nn] = ei_layers[nn]
+                num_inh_layers[nn] = ei_layers[nn]
 
         # input checking
         if num_examples is None:
@@ -182,6 +184,7 @@ class NetworkNIM(Network):
         # build model graph
         with self.graph.as_default():
 
+            np.random.seed(tf_seed)
             tf.set_random_seed(tf_seed)
 
             # define pipeline for feeding data into model
@@ -193,11 +196,12 @@ class NetworkNIM(Network):
                 scope='model',
                 inputs=self.data_in_batch,
                 layer_sizes=layer_sizes,
-                num_inh=Ninh_layers,
+                num_inh=num_inh_layers,
                 activation_funcs=act_funcs,
                 pos_constraint=pos_constraint,
                 weights_initializer=init_type,
                 biases_initializer='zeros',
+                reg_initializer=reg_initializer,
                 log_activations=True)
 
             # define loss function
@@ -253,17 +257,14 @@ class NetworkNIM(Network):
 
     def _assign_model_params(self, sess):
         """Functions assigns parameter values to randomly initialized model"""
-        if np.sum(self.network.layers[0].weights) != 0:
-            with self.graph.as_default():
-                with tf.name_scope('param_reassign/round'):
-                    self.network.read_weights(sess)
+        with self.graph.as_default():
+            self.network.assign_model_params(sess)
 
     def _assign_reg_vals(self, sess):
         """Loops through all current regularization penalties and updates
         prameter values"""
         with self.graph.as_default():
-            with tf.name_scope('reg_reassign/round'):
-                self.network.assign_reg_vals(sess)
+            self.network.assign_reg_vals(sess)
 
     def set_regularization(self, reg_type, reg_val, layer_target=None):
         """Add or reassign regularization values
