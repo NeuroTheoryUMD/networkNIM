@@ -261,7 +261,7 @@ class NetworkNIM(Network):
                 self.cost = tf.divide(cost, tf.reduce_sum(data_out))
         elif self.noise_dist == 'bernoulli':
             with tf.name_scope('bernoulli_loss'):
-                self.cost = tf.reduce_mean(
+                cost = tf.reduce_mean(
                     tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred) )
                 self.unit_cost = tf.reduce_mean(
                     tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred), axis=0 )
