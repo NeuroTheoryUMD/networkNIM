@@ -68,9 +68,10 @@ class NetworkNIM(Network):
             num_examples,
             num_neurons=1,
             num_subunits=None,  # default is LN model with no hidden layers
-            ei_layers=None,
             act_funcs='relu',
+            ei_layers=None,
             noise_dist='poisson',
+            reg_list=None,
             init_type='trunc_normal',
             learning_alg='lbfgs',
             learning_rate=1e-3,
@@ -143,6 +144,8 @@ class NetworkNIM(Network):
             layer_sizes = [stim_dims] + [num_neurons]
             ei_layers = []
         else:
+            if not isinstance(num_subunits,list):
+                num_subunits = [num_subunits]
             layer_sizes = [stim_dims] + num_subunits + [num_neurons]
             if ei_layers is None:
                 ei_layers = [-1]*len(num_subunits)
@@ -150,8 +153,9 @@ class NetworkNIM(Network):
                 'ei_layers must have the same length as num_subunits.'
 
         # Establish positivity constraints
-        pos_constraint = [False]*(len(layer_sizes)-1)
-        num_inh_layers = [0]*(len(layer_sizes)-1)
+        num_layers = len(layer_sizes)-1
+        pos_constraint = [False]*(num_layers)
+        num_inh_layers = [0]*(num_layers)
         for nn in range(len(ei_layers)):
             if ei_layers[nn] >= 0:
                 pos_constraint[nn+1] = True
@@ -164,6 +168,7 @@ class NetworkNIM(Network):
         # set model attributes from input
         self.input_size = stim_dims
         self.output_size = num_neurons
+        self.activation_functions = act_funcs
         self.noise_dist = noise_dist
         self.learning_alg = learning_alg
         self.learning_rate = learning_rate
@@ -204,6 +209,17 @@ class NetworkNIM(Network):
                 reg_initializer=reg_initializer,
                 log_activations=True)
 
+            # Initialize regularization, if there is any
+            if reg_list is not None:
+                for reg_type, reg_val_list in reg_list.iteritems():
+                    if not isinstance(reg_val_list,list):
+                        reg_val_list = [reg_val_list]*num_layers
+                    assert len(reg_val_list) == num_layers, \
+                        'Need to match number of layers with regularization values.'
+                    for nn in range(num_layers):
+                        if reg_val_list[nn] is not None:
+                            self.network.layers[nn].reg.vals[reg_type] = reg_val_list[nn]
+
             # define loss function
             with tf.variable_scope('loss'):
                 self._define_loss()
@@ -229,21 +245,28 @@ class NetworkNIM(Network):
         # define cost function
         if self.noise_dist == 'gaussian':
             with tf.name_scope('gaussian_loss'):
-                self.cost = tf.nn.l2_loss(data_out - pred)
+                # should variable 'cost' be defined here too?
+                cost = tf.nn.l2_loss(data_out - pred)
+                self.unit_cost = tf.reduce_mean(tf.square(data_out-pred),axis=0)
+                #cost = tf.reduce_sum(self.unit_cost) # make two separate calculations
+                self.cost = cost
         elif self.noise_dist == 'poisson':
             with tf.name_scope('poisson_loss'):
                 cost = -tf.reduce_sum(
-                    tf.multiply(data_out,
-                                tf.log(self._log_min + pred))
-                    - pred)
+                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred )
+                self.unit_cost = -tf.reduce_sum(
+                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred, axis=0)
+                #cost = tf.reduce_sum(self.unit_cost)
                 # normalize by number of spikes
                 self.cost = tf.divide(cost, tf.reduce_sum(data_out))
         elif self.noise_dist == 'bernoulli':
             with tf.name_scope('bernoulli_loss'):
                 self.cost = tf.reduce_mean(
-                    tf.nn.sigmoid_cross_entropy_with_logits(
-                        labels=data_out,
-                        logits=pred))
+                    tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred) )
+                self.unit_cost = tf.reduce_mean(
+                    tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred), axis=0 )
+                #cost = tf.reduce_sum(self.unit_cost)
+                self.cost = cost
 
         # add regularization penalties
         with tf.name_scope('regularization'):
@@ -262,7 +285,7 @@ class NetworkNIM(Network):
 
     def _assign_reg_vals(self, sess):
         """Loops through all current regularization penalties and updates
-        prameter values"""
+        parameter values"""
         with self.graph.as_default():
             self.network.assign_reg_vals(sess)
 
@@ -340,6 +363,45 @@ class NetworkNIM(Network):
             return cost
     # END get_LL
 
+    def eval_models(self, input_data, output_data, data_indxs=None):
+        """Get cost for each output neuron without regularization terms
+
+        Args:
+            input_data (time x input_dim numpy array): input to model
+            output_data (time x output_dim numpy array): desired output of
+                model
+            data_indxs (numpy array, optional): indexes of data to use in
+                calculating forward pass; if not supplied, all data is used
+
+        Returns:
+            cost (float): value of model's cost function evaluated on previous
+                model data or that used as input
+            reg_pen (float): value of model's regularization penalty
+
+        Raises:
+            ValueError: If data_in/out time dims don't match
+
+        """
+
+        # check input
+        if input_data.shape[0] != output_data.shape[0]:
+            raise ValueError('Input and output data must have matching ' +
+                             'number of examples')
+        if input_data.shape[0] != self.num_examples:
+            raise ValueError('Input/output data dims must match model values')
+
+        if data_indxs is None:
+            data_indxs = np.arange(self.num_examples)
+
+        with tf.Session(graph=self.graph, config=self.sess_config) as sess:
+
+            self._restore_params(sess, input_data, output_data)
+            LL_neuron = sess.run(self.unit_cost, feed_dict={self.indices: data_indxs})
+
+            return LL_neuron
+    # END get_LL_neuron
+
+
     def get_reg_pen(self):
         """Return reg penalties in a dictionary"""
 
@@ -361,3 +423,92 @@ class NetworkNIM(Network):
                             self.network.layers[layer].get_reg_pen(sess)
 
         return reg_dict
+    # END get_reg_pen
+
+
+    def copy_model( self, target=None,
+                   layers_to_transfer=None,
+                   target_layers=None,
+                   init_type='trunc_normal',tf_seed=0):
+
+        num_layers = len(self.network.layers)
+        if target is None:
+            # Re-derive subunit layers and ei-masks
+            num_subunits = [0]*(num_layers-1)
+            ei_layers = [-1]*(num_layers-1)
+            for nn in range(len(num_subunits)):
+                num_subunits[nn] = self.network.layers[nn].num_outputs
+                if self.network.layers[nn+1].pos_constraint:
+                    ei_layers[nn] = 0  # will copy ei_mask later
+
+            # Accumulate regularization list from layers
+            reg_list = {}
+            for reg_type, reg_vals in self.network.layers[0].reg.vals.iteritems():
+                reg_list[reg_type] = [None]*num_layers
+            for nn in range(num_layers):
+                for reg_type, reg_vals in self.network.layers[nn].reg.vals.iteritems():
+                    reg_list[reg_type][nn] = self.network.layers[nn].reg.vals[reg_type]
+
+            # Make new target
+            target = NetworkNIM( self.input_size, self.num_examples,
+                                 num_neurons=self.output_size,
+                                 num_subunits = num_subunits,
+                                 act_funcs = self.activation_functions,
+                                 ei_layers=ei_layers,
+                                 noise_dist=self.noise_dist,
+                                 reg_list=reg_list,
+                                 init_type=init_type,
+                                 learning_alg=self.learning_alg,
+                                 learning_rate=self.learning_rate,
+                                 use_batches = self.use_batches,
+                                 tf_seed=tf_seed,
+                                 use_gpu=self.use_gpu)
+            # the rest of the properties will be copied directly, which includes ei_layer stuff, act_funcs
+
+        # Figure out mapping from self.layers to target.layers
+        num_layers_target = len(target.network.layers)
+        if layers_to_transfer is not None:
+            assert max(layers_to_transfer) <= num_layers, 'Too many layers to transfer.'
+            if target_layers is None:
+                assert len(layers_to_transfer) <= num_layers_target, 'Too many layers to transfer.'
+                target_layers = range(length(layers_to_transfer))
+        if target_layers is not None:
+            assert max(target_layers) <= num_layers_target, 'Too many layers for target.'
+            if layers_to_transfer is None:
+                assert len(target_layers) <= num_layers, 'Too many target layers.'
+                layers_to_transfer = range(len(target_layers))
+        if num_layers >= num_layers_target:
+            target_copy = range(num_layers_target)
+            if target_layers is None:
+                self_copy = target_copy  # then default is copy the top_most layers
+            else:
+                self_copy = target_layers
+        else:
+            self_copy = range(num_layers)
+            if target_layers is None:
+                target_copy = self_copy # then default is copy the top_most layers
+            else:
+                target_copy = target_layers
+        assert len(target_copy) == len(self_copy), 'Number of targets and transfers must match.'
+
+        # Copy information from self to new target NIM
+        for nn in range(len(self_copy)):
+            self_layer = self.network.layers[self_copy[nn]]
+            tar = target_copy[nn]
+
+            # Copy remaining layer properties
+            target.network.layers[tar].ei_mask = self_layer.ei_mask
+
+            if self_layer.num_outputs <= target.network.layers[tar].num_outputs:
+                target.network.layers[tar].weights[:,0:self_layer.num_outputs] \
+                    = self_layer.weights
+                target.network.layers[tar].biases[0:self_layer.num_outputs] \
+                    = self_layer.biases
+            else:
+                target.network.layers[tar].weights = \
+                    self_layer.weights[:,0:target.network.layers[tar].num_outputs]
+                target.network.layers[tar].biases = \
+                    self_layer.biases[0:target.network.layers[tar].num_outputs]
+
+        return target
+    # END make_copy
