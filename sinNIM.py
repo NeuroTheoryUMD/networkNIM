@@ -626,7 +626,7 @@ class siLayer(Layer):
             with tf.name_scope('weights_init'):
                 self.weights_ph = tf.placeholder_with_default(
                     self.weights,
-                    shape=[num_inputs, 1, num_filters],
+                    shape=[filter_width, 1, num_filters],
                     name='weights_ph')
             self.weights_var = tf.Variable(
                 self.weights_ph,
