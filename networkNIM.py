@@ -153,9 +153,9 @@ class NetworkNIM(Network):
                 'ei_layers must have the same length as num_subunits.'
 
         # Establish positivity constraints
-        num_layers = len(layer_sizes)-1
-        pos_constraint = [False]*(num_layers)
-        num_inh_layers = [0]*(num_layers)
+        self.num_layers = len(layer_sizes)-1
+        pos_constraint = [False]*self.num_layers
+        num_inh_layers = [0]*self.num_layers
         for nn in range(len(ei_layers)):
             if ei_layers[nn] >= 0:
                 pos_constraint[nn+1] = True
@@ -174,6 +174,24 @@ class NetworkNIM(Network):
         self.learning_rate = learning_rate
         self.num_examples = num_examples
         self.use_batches = use_batches
+
+        # params for FFNetwork
+        network_params = {
+            'scope': 'model',
+            'layer_sizes': layer_sizes,
+            'num_inh': num_inh_layers,
+            'activation_funcs': act_funcs,
+            'pos_constraint': pos_constraint,
+            'weights_initializer': init_type,
+            'biases_initializer': 'zeros',
+            'reg_initializer': reg_initializer,
+            'log_activations': False
+        }
+
+        self._build_graph(use_gpu, tf_seed, reg_list, network_params)
+    # END networkNIM.__init__
+
+    def _build_graph(self, use_gpu, tf_seed, reg_list, network_params):
 
         # for saving and restoring models
         self.graph = tf.Graph()  # must be initialized before graph creation
@@ -197,26 +215,16 @@ class NetworkNIM(Network):
                 self._initialize_data_pipeline()
 
             # initialize weights and create model
-            self.network = FFNetwork(
-                scope='model',
-                inputs=self.data_in_batch,
-                layer_sizes=layer_sizes,
-                num_inh=num_inh_layers,
-                activation_funcs=act_funcs,
-                pos_constraint=pos_constraint,
-                weights_initializer=init_type,
-                biases_initializer='zeros',
-                reg_initializer=reg_initializer,
-                log_activations=True)
+            self._define_network(network_params)
 
             # Initialize regularization, if there is any
             if reg_list is not None:
                 for reg_type, reg_val_list in reg_list.iteritems():
-                    if not isinstance(reg_val_list,list):
-                        reg_val_list = [reg_val_list]*num_layers
-                    assert len(reg_val_list) == num_layers, \
+                    if not isinstance(reg_val_list, list):
+                        reg_val_list = [reg_val_list]*self.num_layers
+                    assert len(reg_val_list) == self.num_layers, \
                         'Need to match number of layers with regularization values.'
-                    for nn in range(num_layers):
+                    for nn in range(self.num_layers):
                         if reg_val_list[nn] is not None:
                             self.network.layers[nn].reg.vals[reg_type] = reg_val_list[nn]
 
@@ -235,6 +243,9 @@ class NetworkNIM(Network):
             self.merge_summaries = tf.summary.merge_all()
             # add variable initialization op to graph
             self.init = tf.global_variables_initializer()
+
+    def _define_network(self, network_params):
+        self.network = FFNetwork(inputs=self.data_in_batch, **network_params)
 
     def _define_loss(self):
         """Loss function that will be used to optimize model parameters"""

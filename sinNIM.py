@@ -12,6 +12,7 @@ from FFnetwork.layer import Layer
 from FFnetwork.regularization import Regularization
 from .networkNIM import NetworkNIM
 
+
 class SInetNIM( NetworkNIM ):
     """Implementation of SInetNIM
 
@@ -152,9 +153,9 @@ class SInetNIM( NetworkNIM ):
                 'ei_layers must have the same length as num_subunits.'
 
         # Establish positivity constraints
-        num_layers = len(layer_sizes)-1
-        pos_constraint = [False]*(num_layers)
-        num_inh_layers = [0]*(num_layers)
+        self.num_layers = len(layer_sizes)-1
+        pos_constraint = [False]*self.num_layers
+        num_inh_layers = [0]*self.num_layers
         for nn in range(len(ei_layers)):
             if ei_layers[nn] >= 0:
                 pos_constraint[nn+1] = True
@@ -176,71 +177,27 @@ class SInetNIM( NetworkNIM ):
         self.num_examples = num_examples
         self.use_batches = use_batches
 
-        # for saving and restoring models
-        self.graph = tf.Graph()  # must be initialized before graph creation
+        # params for siFFNetwork
+        network_params = {
+            'scope': 'model',
+            'first_filter_width': first_filter_width,
+            'shift_spacing': shift_spacing,
+            'binocular': binocular,
+            'layer_sizes': layer_sizes,
+            'num_inh': num_inh_layers,
+            'activation_funcs': act_funcs,
+            'pos_constraint': pos_constraint,
+            'weights_initializer': init_type,
+            'biases_initializer': 'zeros',
+            'reg_initializer': reg_initializer,
+            'log_activations': False
+        }
 
-        # for specifying device
-        if use_gpu is not None:
-            self.use_gpu = use_gpu
-            if use_gpu:
-                self.sess_config = tf.ConfigProto(device_count={'GPU': 1})
-            else:
-                self.sess_config = tf.ConfigProto(device_count={'GPU': 0})
-
-        # build model graph
-        with self.graph.as_default():
-
-            np.random.seed(tf_seed)
-            tf.set_random_seed(tf_seed)
-
-            # define pipeline for feeding data into model
-            with tf.variable_scope('data'):
-                self._initialize_data_pipeline()
-
-            # initialize weights and create model
-            self.network = siFFNetwork(
-                scope='model',
-                inputs=self.data_in_batch,
-                first_filter_width=first_filter_width,
-                shift_spacing=shift_spacing,
-                binocular=binocular,
-                layer_sizes=layer_sizes,
-                num_inh=num_inh_layers,
-                activation_funcs=act_funcs,
-                pos_constraint=pos_constraint,
-                weights_initializer=init_type,
-                biases_initializer='zeros',
-                reg_initializer=reg_initializer,
-                log_activations=True)
-
-            # Initialize regularization, if there is any
-            if reg_list is not None:
-                for reg_type, reg_val_list in reg_list.iteritems():
-                    if not isinstance(reg_val_list,list):
-                        reg_val_list = [reg_val_list]*num_layers
-                    assert len(reg_val_list) == num_layers, \
-                        'Need to match number of layers with regularization values.'
-                    for nn in range(num_layers):
-                        if reg_val_list[nn] is not None:
-                            self.network.layers[nn].reg.vals[reg_type] = reg_val_list[nn]
-
-            # define loss function
-            with tf.variable_scope('loss'):
-                self._define_loss()
-
-            # define optimization routine
-            with tf.variable_scope('optimizer'):
-                self._define_optimizer()
-
-            # add additional ops
-            # for saving and restoring models (initialized after var creation)
-            self.saver = tf.train.Saver()
-            # collect all summaries into a single op
-            self.merge_summaries = tf.summary.merge_all()
-            # add variable initialization op to graph
-            self.init = tf.global_variables_initializer()
+        self._build_graph(use_gpu, tf_seed, reg_list, network_params)
     # END SInetNIM.__init__
 
+    def _define_network(self, network_params):
+            self.network = siFFNetwork(inputs=self.data_in_batch, **network_params)
 
     def copy_model( self, target=None,
                    layers_to_transfer=None,
@@ -334,6 +291,7 @@ class SInetNIM( NetworkNIM ):
 
         return target
     # END SInetNIM.make_copy
+
 
 class siFFNetwork( FFNetwork ):
     """Implementation of siFFNetwork"""
@@ -465,6 +423,7 @@ class siFFNetwork( FFNetwork ):
         else:
             self.log = False
     # END siFFnetwork.__init__
+
 
 class siLayer(Layer):
     """Implementation of fully connected neural network layer
