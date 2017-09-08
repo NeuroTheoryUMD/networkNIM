@@ -138,15 +138,22 @@ class SInetNIM( NetworkNIM ):
         # call __init__() method of super-super class
         super(NetworkNIM, self).__init__()
 
-        # input checking
+        # Extract input size from stim dimensions
+        if isinstance(stim_dims,list):
+            while len(stim_dims)<3:
+                stim_dims.append(1)
+        else:
+            stim_dims = [1,stim_dims,1]
+        num_inputs = stim_dims[0]*stim_dims[1]*stim_dims[2]
+
         if num_subunits is None:
             # This will be LN models (default)
-            layer_sizes = [stim_dims] + [num_neurons]
+            layer_sizes = [num_inputs] + [num_neurons]
             ei_layers = []
         else:
             if not isinstance(num_subunits,list):
                 num_subunits = [num_subunits]
-            layer_sizes = [stim_dims] + num_subunits + [num_neurons]
+            layer_sizes = [num_inputs] + num_subunits + [num_neurons]
             if ei_layers is None:
                 ei_layers = [-1]*len(num_subunits)
             assert len(num_subunits) == len(ei_layers), \
@@ -166,7 +173,8 @@ class SInetNIM( NetworkNIM ):
             raise ValueError('Must specify number of training examples')
 
         # set model attributes from input
-        self.input_size = stim_dims
+        self.input_size = num_inputs
+        self.stim_dims = stim_dims
         self.output_size = num_neurons
         self.shift_spacing = shift_spacing  # particular to SInet
         self.binocular = binocular # particular to SInet
