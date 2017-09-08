@@ -386,10 +386,10 @@ class siFFNetwork( FFNetwork ):
             self.layers.append(siLayer(
                 scope='conv_layer',
                 inputs=inputs,
-                filter_width=first_filter_width,
+                filter_size=first_filter_width,
                 shift_spacing=shift_spacing,
                 binocular=binocular,
-                num_inputs=layer_sizes[0],
+                input_dims=layer_sizes[0],
                 num_filters=layer_sizes[1],
                 activation_func=activation_funcs[0],
                 weights_initializer=weights_initializer[0],
@@ -457,9 +457,9 @@ class siLayer(Layer):
             self,
             scope=None,
             inputs=None,
-            num_inputs=None,
+            input_dims=None, # this can be a list up to 3-dimensions
             num_filters=None,
-            filter_width=None,
+            filter_size=None, # this can be a list up to 3-dimensions
             shift_spacing=1,
             binocular=False,
             activation_func='relu',
@@ -501,182 +501,103 @@ class siLayer(Layer):
 
         """
 
-        # check for required inputs
-        if scope is None:
-            raise TypeError('Must specify layer scope')
-        if inputs is None:
-            raise TypeError('Must specify layer input')
-        if num_inputs is None or num_filters is None:
-            raise TypeError('Must specify both input dimensions and number of filters.')
-
-        self.scope = scope
-
-        self.num_inputs = num_inputs
-        self.num_outputs = num_filters
-        if filter_width is None:
-            if binocular is False:
-                filter_width = num_inputs
-            else:
-                filter_width = num_inputs/2
-
-        # resolve activation function string
-        if activation_func == 'relu':
-            self.activation_func = tf.nn.relu
-        elif activation_func == 'sigmoid':
-            self.activation_func = tf.sigmoid
-        elif activation_func == 'tanh':
-            self.activation_func = tf.tanh
-        elif activation_func == 'linear':
-            self.activation_func = tf.identity
-        elif activation_func == 'softplus':
-            self.activation_func = tf.nn.softplus
-        elif activation_func == 'quad':
-            self.activation_func = tf.square
-        elif activation_func == 'elu':
-            self.activation_func = tf.nn.elu
-        else:
-            raise ValueError('Invalid activation function ''%s''' %
-                             activation_func)
-
-        # create excitatory/inhibitory mask
-        if num_inh > num_filters:
-            raise ValueError('Too many inhibitory units designated')
-        self.ei_mask = [1] * (num_filters - num_inh) + [-1] * num_inh
-        if num_inh > 0:
-            self.ei_mask_var = tf.constant(
-                self.ei_mask, dtype=tf.float32, name='ei_mask')
-        else:
-            self.ei_mask_var = None
-
-        # save positivity constraint on weights
-        self.pos_constraint = pos_constraint
+        # Error checking
         assert pos_constraint is False, 'No positive constraint should be applied to this layer.'
 
-        # use tf's summary writer to save layer activation histograms
-        if log_activations:
-            self.log = True
+        # Process stim and filter dimensions (potentially both passed in as num_inputs list)
+        if isinstance( input_dims, list ):
+            while len(input_dims)<3:
+                input_dims.append(1)
         else:
-            self.log = False
+            input_dims = [1,input_dims,1]  # assume 1-dimensional (space)
 
-        # build layer
-        with tf.name_scope(self.scope):
-
-            # weights initialzed so num_filters is in nchannels argument of conv1d
-            if binocular is False:
-                weight_dims = (filter_width, 1, num_filters)
+        if filter_size is None:
+            filter_size = input_dims
+            if binocular is True:
+                filter_size[1] = filter_size[1] / 2
+        else:
+            if isinstance(filter_size,list):
+                while len(filter_size) < 3:
+                    filter_size.append(1)
             else:
-                weight_dims = (filter_width, 1, num_filters)
+                filter_size = [filter_size,1,1]
 
-            if weights_initializer == 'trunc_normal':
-                init_weights = np.random.normal(size=weight_dims, scale=0.1)
-            elif weights_initializer == 'normal':
-                init_weights = np.random.normal(size=weight_dims, scale=0.1)
-            elif weights_initializer == 'zeros':
-                init_weights = np.zeros(shape=weight_dims, dtype='float32')
-            else:
-                raise ValueError('Invalid weights_initializer ''%s''' %
-                                 weights_initializer)
-            # initialize numpy array that will feed placeholder
-            if pos_constraint is True:
-                init_weights = np.maximum(init_weights,0)
+        #assert( filter_size[0]*filter_size[1]*filter_size[2] == nevermind)
+        # Calculate number of shifts (for output)
+        num_shifts = 1
+        if input_dims[0] > 1:
+            num_shifts = np.floor(input_dims[0]/shift_spacing)
+        if input_dims[1] > 1:
+            num_shifts = num_shifts * np.floor(input_dims[1]/shift_spacing)
 
-            self.weights = init_weights.astype('float32')
-            # initialize weights placeholder/variable
-            with tf.name_scope('weights_init'):
-                self.weights_ph = tf.placeholder_with_default(
-                    self.weights,
-                    shape=[filter_width, 1, num_filters],
-                    name='weights_ph')
-            self.weights_var = tf.Variable(
-                self.weights_ph,
-                dtype=tf.float32,
-                name='weights_var')
+        # Set up additional params_dict for siLayer
+        siLayer_params = {'binocular': binocular, 'shift_spacing': shift_spacing,
+                          'num_shifts': int(num_shifts),
+                          'input_dims': input_dims, 'filter_size': filter_size}
 
-            self.num_outputs = num_filters * int(np.floor(num_inputs/shift_spacing))
 
-            # resolve biases initializer string
-            bias_dims = (1, num_filters)
-            if biases_initializer == 'trunc_normal':
-                init_biases = np.random.normal(size=bias_dims, scale=0.1)
-            elif biases_initializer == 'normal':
-                init_biases = np.random.normal(size=bias_dims, scale=0.1)
-            elif biases_initializer == 'zeros':
-                init_biases = np.zeros(shape=bias_dims, dtype='float32')
-            else:
-                raise ValueError('Invalid biases_initializer ''%s''' %
-                                 biases_initializer)
-            # initialize numpy array that will feed placeholder
-            self.biases = init_biases.astype('float32')
-            # initialize biases placeholder/variable
-            with tf.name_scope('biases_init'):
-                self.biases_ph = tf.placeholder_with_default(
-                    self.biases,
-                    shape=[1, num_filters],
-                    name='biases_ph')
-            self.biases_var = tf.Variable(
-                self.biases_ph,
-                dtype=tf.float32,
-                name='biases_var')
+        super(siLayer, self).__init__(
+                scope=scope,
+                inputs=inputs,
+                num_inputs=filter_size,   # Note difference from layer
+                num_outputs=num_filters,   # Note difference from layer
+                activation_func=activation_func,
+                weights_initializer=weights_initializer,
+                biases_initializer=biases_initializer,
+                reg_initializer=reg_initializer,
+                num_inh=num_inh,
+                pos_constraint=False,  # Note difference from layer
+                log_activations=log_activations,
+                additional_params_dict=siLayer_params )
 
-            # save layer regularization info
-            self.reg = Regularization(num_inputs=num_inputs,
-                                      num_outputs=num_filters,vals=reg_initializer)
+        # calculate number of shifts in convolution
+        self.num_outputs = int(num_filters*num_shifts)
+    # END siLayer.__init__
 
-            # push data through layer
-            #pre = tf.add(tf.matmul(inputs, self.weights_var), self.biases_var)
-            if binocular is False:
-                pre = tf.nn.conv1d( tf.expand_dims(inputs,-1), self.weights_var, shift_spacing, padding='SAME' )
-            else:
-                stimL = tf.expand_dims( tf.slice( inputs2d, [0,0], size[-1,num_inputs/2] ), -1 )
-                stimR = tf.expand_dims( tf.slice( inputs2d, [0,num_inputs/2], size[-1,num_inputs/2] ), -1 )
-                pre = tf.concat(
-                    tf.nn.conv1d(stimL, self.weights_var, shift_spacing, padding='SAME' ),
-                    tf.nn.conv1d(stimR, self.weights_var, shift_spacing, padding='SAME' ) )
+    def _build_graph( self, inputs, params_dict ):
+        # push data through layer
 
-            #self.num_outputs = pre.get_shape()[0].value
-            #print('Conv outputs = ''%d''' % self.num_outputs)
-            #print(self.num_outputs)
+        # Unfold siLayer-specific parameters for building graph
+        binocular = params_dict['binocular']
+        shift_spacing = params_dict['shift_spacing']
+        conv_filter_dims = params_dict['filter_size'] + [self.num_outputs]
+        stim_dims = [-1]+params_dict['input_dims']
 
-            if self.ei_mask_var is not None:
-                post = tf.multiply( tf.add(self.activation_func(pre),self.biases_var),
-                                   self.ei_mask_var)
-            else:
-                post = tf.add( self.activation_func(pre), self.biases_var )
+        # Make strides list
+        strides = [1,1,1,1]
+        if conv_filter_dims[1]>1:
+            strides[1]=shift_spacing
+        if conv_filter_dims[2] > 1:
+            strides[2] = shift_spacing
 
-            self.outputs = tf.reshape( post, [-1,self.num_outputs] )
+                # Reshape stim and weights into 4-d variables (to be 4-d)
+        ws_conv = tf.reshape(self.weights_var,conv_filter_dims)
+        shaped_inputs = tf.reshape(inputs, stim_dims)
 
-            if self.log:
-                tf.summary.histogram('act_pre', pre)
-                tf.summary.histogram('act_post', post)
-    # END __init__
+        # pre = tf.add(tf.matmul(inputs, self.weights_var), self.biases_var)
+        if binocular is False:
+            pre = tf.nn.conv2d( shaped_inputs, ws_conv, strides, padding='SAME')
+        else:
+            NX = params_dict['input_dims'][1]/2
+            stimL = tf.slice( shaped_inputs, [0,0,0,0], [-1,NX,-1,-1] )
+            stimR = tf.slice( shaped_inputs, [0,NX,0,0], [-1,NX,-1,-1] )
+            pre = tf.concat(
+                tf.nn.conv2d(stimL, ws_conv, strides, padding='SAME'),
+                tf.nn.conv2d(stimR, ws_conv, strides, padding='SAME'))
 
-    def assign_layer_params(self, sess):
-        """Read weights/biases in numpy arrays into tf Variables"""
-        sess.run(
-            [self.weights_var.initializer, self.biases_var.initializer],
-            feed_dict={self.weights_ph: self.weights,
-                       self.biases_ph: self.biases})
+        # self.num_outputs = pre.get_shape()[0].value
+        # print('Conv outputs = ''%d''' % self.num_outputs)
+        # print(self.num_outputs)
 
-    def write_layer_params(self, sess):
-        """Write weights/biases in tf Variables to numpy arrays"""
-        self.weights = sess.run(self.weights_var)
-        if self.pos_constraint is True:
-            self.weights = np.maximum(self.weights, 0)
-        self.biases = sess.run(self.biases_var)
+        if self.ei_mask_var is not None:
+            post = tf.multiply(tf.add(self.activation_func(pre), self.biases_var),
+                               self.ei_mask_var)
+        else:
+            post = tf.add(self.activation_func(pre), self.biases_var)
 
-    def define_regularization_loss(self):
-        """Wrapper function for building regularization portion of graph"""
-        with tf.name_scope(self.scope):
-            return self.reg.define_reg_loss(self.weights_var)
+        self.outputs = tf.reshape( post, [-1, self.num_outputs*params_dict['num_shifts']] )
 
-    def set_regularization(self, reg_type, reg_val):
-        """Wrapper function for setting regularization"""
-        return self.reg.set_reg_val(reg_type, reg_val)
-
-    def assign_reg_vals(self, sess):
-        """Wrapper function for assigning regularization values"""
-        self.reg.assign_reg_vals(sess)
-
-    def get_reg_pen(self, sess):
-        """Wrapper function for returning regularization penalty struct"""
-        return self.reg.get_reg_penalty(sess)
+        if self.log:
+            tf.summary.histogram('act_pre', pre)
+            tf.summary.histogram('act_post', post)
+    # END siLayer._build_layer

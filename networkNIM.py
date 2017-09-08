@@ -82,8 +82,8 @@ class NetworkNIM(Network):
         """Constructor for network-NIM class
 
         Args:
-            stim_dims: int representing number of stimulus dimensions 
-                (must match X-matrix)
+            stim_dims: int or list representing number of stimulus dimensions
+                (must ultimately match X-matrix)
             num_examples (int): total number of examples in training data
             num_neurons: number of neurons to fit simultaneously
             num_subunits: (list of ints, or empty list), listing number of 
@@ -138,10 +138,19 @@ class NetworkNIM(Network):
         # call __init__() method of super class
         super(NetworkNIM, self).__init__()
 
+        # process stim-dims into 3-d dimensions
+        if not isinstance(stim_dims,list):
+            # then just 1-dimension (place in time)
+            stim_dims = [stim_dims,1,1]
+        else:
+            while len(stim_dims) < 3:
+                stim_dims.append(1)
+        input_size = stim_dims[0]*stim_dims[1]*stim_dims[2]
+
         # input checking
         if num_subunits is None:
             # This will be LN models (default)
-            layer_sizes = [stim_dims] + [num_neurons]
+            layer_sizes = [input_size] + [num_neurons]
             ei_layers = []
         else:
             if not isinstance(num_subunits,list):
@@ -165,8 +174,10 @@ class NetworkNIM(Network):
         if num_examples is None:
             raise ValueError('Must specify number of training examples')
 
+
         # set model attributes from input
-        self.input_size = stim_dims
+        self.stim_dims = stim_dims
+        self.input_size = input_size
         self.output_size = num_neurons
         self.activation_functions = act_funcs
         self.noise_dist = noise_dist
@@ -461,7 +472,7 @@ class NetworkNIM(Network):
                     reg_list[reg_type][nn] = self.network.layers[nn].reg.vals[reg_type]
 
             # Make new target
-            target = NetworkNIM( self.input_size, self.num_examples,
+            target = NetworkNIM( self.stim_dims, self.num_examples,
                                  num_neurons=self.output_size,
                                  num_subunits = num_subunits,
                                  act_funcs = self.activation_functions,
@@ -482,7 +493,7 @@ class NetworkNIM(Network):
             assert max(layers_to_transfer) <= num_layers, 'Too many layers to transfer.'
             if target_layers is None:
                 assert len(layers_to_transfer) <= num_layers_target, 'Too many layers to transfer.'
-                target_layers = range(length(layers_to_transfer))
+                target_layers = range(len(layers_to_transfer))
         if target_layers is not None:
             assert max(target_layers) <= num_layers_target, 'Too many layers for target.'
             if layers_to_transfer is None:
