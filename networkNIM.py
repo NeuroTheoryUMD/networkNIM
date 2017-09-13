@@ -78,7 +78,8 @@ class NetworkNIM(Network):
             reg_initializer=None,
             use_batches=False,
             tf_seed=0,
-            use_gpu=None):
+            use_gpu=None,
+            additional_params=None):
         """Constructor for network-NIM class
 
         Args:
@@ -155,7 +156,7 @@ class NetworkNIM(Network):
         else:
             if not isinstance(num_subunits,list):
                 num_subunits = [num_subunits]
-            layer_sizes = [stim_dims] + num_subunits + [num_neurons]
+            layer_sizes = [input_size] + num_subunits + [num_neurons]
             if ei_layers is None:
                 ei_layers = [-1]*len(num_subunits)
             assert len(num_subunits) == len(ei_layers), \
@@ -173,7 +174,6 @@ class NetworkNIM(Network):
         # input checking
         if num_examples is None:
             raise ValueError('Must specify number of training examples')
-
 
         # set model attributes from input
         self.stim_dims = stim_dims
@@ -199,10 +199,10 @@ class NetworkNIM(Network):
             'log_activations': False
         }
 
-        self._build_graph(use_gpu, tf_seed, reg_list, network_params)
+        self._build_graph(use_gpu, tf_seed, reg_list, network_params, additional_params )
     # END networkNIM.__init__
 
-    def _build_graph(self, use_gpu, tf_seed, reg_list, network_params):
+    def _build_graph(self, use_gpu, tf_seed, reg_list, network_params, additional_params=None):
 
         # for saving and restoring models
         self.graph = tf.Graph()  # must be initialized before graph creation
@@ -226,7 +226,7 @@ class NetworkNIM(Network):
                 self._initialize_data_pipeline()
 
             # initialize weights and create model
-            self._define_network(network_params)
+            self._define_network( network_params, additional_params )
 
             # Initialize regularization, if there is any
             if reg_list is not None:
@@ -255,8 +255,10 @@ class NetworkNIM(Network):
             # add variable initialization op to graph
             self.init = tf.global_variables_initializer()
 
-    def _define_network(self, network_params):
-        self.network = FFNetwork(inputs=self.data_in_batch, **network_params)
+    def _define_network(self, network_params, additional_params=None):
+
+        self.network = FFNetwork(inputs=self.data_in_batch,
+                                 additional_params=additional_params, **network_params )
 
     def _define_loss(self):
         """Loss function that will be used to optimize model parameters"""

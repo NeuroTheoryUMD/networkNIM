@@ -135,77 +135,59 @@ class SInetNIM( NetworkNIM ):
 
         """
 
-        # call __init__() method of super-super class
-        super(NetworkNIM, self).__init__()
 
-        # Extract input size from stim dimensions
+        # Make stim_dimensions with default of single dimension correspond to space
         if isinstance(stim_dims,list):
             while len(stim_dims)<3:
                 stim_dims.append(1)
         else:
             stim_dims = [1,stim_dims,1]
-        num_inputs = stim_dims[0]*stim_dims[1]*stim_dims[2]
 
-        if num_subunits is None:
-            # This will be LN models (default)
-            layer_sizes = [num_inputs] + [num_neurons]
-            ei_layers = []
+        # Work out filter size (from filter_widths and num lags)
+        if first_filter_width is None:
+            first_filter_size = stim_dims
         else:
-            if not isinstance(num_subunits,list):
-                num_subunits = [num_subunits]
-            layer_sizes = [num_inputs] + num_subunits + [num_neurons]
-            if ei_layers is None:
-                ei_layers = [-1]*len(num_subunits)
-            assert len(num_subunits) == len(ei_layers), \
-                'ei_layers must have the same length as num_subunits.'
+            first_filter_size = [stim_dims[0],first_filter_width,1]  # assumes 1-d filter here
+            if stim_dims[2] > 1:
+                first_filter_size[2] = first_filter_width  # then 2-d filter
 
-        # Establish positivity constraints
-        self.num_layers = len(layer_sizes)-1
-        pos_constraint = [False]*self.num_layers
-        num_inh_layers = [0]*self.num_layers
-        for nn in range(len(ei_layers)):
-            if ei_layers[nn] >= 0:
-                pos_constraint[nn+1] = True
-                num_inh_layers[nn] = ei_layers[nn]
-
-        # input checking
-        if num_examples is None:
-            raise ValueError('Must specify number of training examples')
-
-        # set model attributes from input
-        self.input_size = num_inputs
-        self.stim_dims = stim_dims
-        self.output_size = num_neurons
-        self.shift_spacing = shift_spacing  # particular to SInet
-        self.binocular = binocular # particular to SInet
-        self.activation_functions = act_funcs
-        self.noise_dist = noise_dist
-        self.learning_alg = learning_alg
-        self.learning_rate = learning_rate
-        self.num_examples = num_examples
-        self.use_batches = use_batches
-
-        # params for siFFNetwork
-        network_params = {
-            'scope': 'model',
-            'first_filter_width': first_filter_width,
+        # additional params for siFFNetwork
+        additional_params = {
+            'stim_dims': stim_dims,
+            'first_filter_size': first_filter_size,
             'shift_spacing': shift_spacing,
-            'binocular': binocular,
-            'layer_sizes': layer_sizes,
-            'num_inh': num_inh_layers,
-            'activation_funcs': act_funcs,
-            'pos_constraint': pos_constraint,
-            'weights_initializer': init_type,
-            'biases_initializer': 'zeros',
-            'reg_initializer': reg_initializer,
-            'log_activations': False
-        }
+            'binocular': binocular }
 
-        self._build_graph(use_gpu, tf_seed, reg_list, network_params)
+        # call __init__() method of super-super class
+        super(SInetNIM, self).__init__(
+            stim_dims = stim_dims,
+            num_examples = num_examples,
+            num_neurons = num_neurons,
+            num_subunits = num_subunits,
+            act_funcs = act_funcs,
+            ei_layers = ei_layers,
+            noise_dist = noise_dist,
+            reg_list = reg_list,
+            init_type = init_type,
+            learning_alg= learning_alg,
+            learning_rate = learning_rate,
+            reg_initializer = reg_initializer,
+            use_batches = use_batches,
+            tf_seed = tf_seed,
+            use_gpu = use_gpu,
+            additional_params = additional_params )
+
     # END SInetNIM.__init__
 
-    def _define_network(self, network_params):
-            self.network = siFFNetwork(inputs=self.data_in_batch, **network_params)
+    def _define_network(self, network_params, additional_params ):
+
+            self.network = siFFNetwork( inputs=self.data_in_batch,
+                                        first_filter_size = additional_params['first_filter_size'],
+                                        stim_dims = additional_params['stim_dims'],
+                                        shift_spacing = additional_params['shift_spacing'],
+                                        binocular = additional_params['binocular'],
+                                        **network_params )
+
 
     def copy_model( self, target=None,
                    layers_to_transfer=None,
@@ -236,7 +218,7 @@ class SInetNIM( NetworkNIM ):
             target = SInetNIM( self.input_size, self.num_examples,
                                num_neurons=self.output_size,
                                num_subunits = num_subunits,
-                               first_filter_width=self.network.layers[0].weights.shape[0],
+                               first_filter_size=self.network.layers[0].weights.shape[0],
                                binocular=self.binocular,
                                shift_spacing=self.shift_spacing,
                                act_funcs = self.activation_functions,
@@ -308,7 +290,8 @@ class siFFNetwork( FFNetwork ):
             self,
             scope=None,
             inputs=None,
-            first_filter_width=None,
+            first_filter_size=None,
+            stim_dims=None,
             shift_spacing=1,
             binocular=False,
             layer_sizes=None,
@@ -352,85 +335,90 @@ class siFFNetwork( FFNetwork ):
 
         """
 
-        # check for required inputs
-        if scope is None:
-            raise TypeError('Must specify network scope')
-        if inputs is None:
-            raise TypeError('Must specify network input')
-        if layer_sizes is None:
-            raise TypeError('Must specify layer sizes')
+        # Format of stim_dims
+        if stim_dims is None:
+            # then default to single 1-dimensional input
+            stim_dims = [1,layer_sizes[0],1]
+        else:
+            if isinstance(stim_dims,list):
+                while len(stim_dims)<3:
+                    stim_dims.append(1)
 
-        self.scope = scope
-        self.num_layers = len(layer_sizes) - 1
+        assert layer_sizes[0] == stim_dims[0]*stim_dims[1]*stim_dims[2], \
+            'Stimulus dimensions do not match first layer size.'
 
-        # expand layer options
-        if type(activation_funcs) is not list:
-            activation_funcs = [activation_funcs] * self.num_layers
-        elif len(activation_funcs) != self.num_layers:
-            raise ValueError('Invalid number of activation_funcs')
+        # Package si-specific parameters
+        additional_params = {
+            'first_filter_size': first_filter_size,
+            'shift_spacing': shift_spacing,
+            'binocular': binocular,
+            'stim_dims': stim_dims }
 
-        if type(weights_initializer) is not list:
-            weights_initializer = [weights_initializer] * self.num_layers
-        elif len(weights_initializer) != self.num_layers:
-            raise ValueError('Invalid number of weights_initializer')
+        super(siFFNetwork, self).__init__(
+            scope = scope,
+            inputs = inputs,
+            layer_sizes = layer_sizes,
+            activation_funcs = activation_funcs,
+            weights_initializer = weights_initializer,
+            biases_initializer = biases_initializer,
+            reg_initializer = reg_initializer,
+            num_inh = num_inh,
+            pos_constraint = pos_constraint,
+            log_activations = log_activations,
+            additional_params = additional_params )
 
-        if type(biases_initializer) is not list:
-            biases_initializer = [biases_initializer] * self.num_layers
-        elif len(biases_initializer) != self.num_layers:
-            raise ValueError('Invalid number of biases_initializer')
+    # END siFFnetwork.__init__
 
-        if type(num_inh) is not list:
-            num_inh = [num_inh] * self.num_layers
-        elif len(num_inh) != self.num_layers:
-            raise ValueError('Invalid number of num_inh')
 
-        if type(pos_constraint) is not list:
-            pos_constraint = [pos_constraint] * self.num_layers
-        elif len(pos_constraint) != self.num_layers:
-            raise ValueError('Invalid number of pos_con')
+    def _define_network( self, inputs, network_params, additional_params ):
+
+        # Pull out network params
+        layer_sizes = network_params['layer_sizes']
+        # Additional si-specific params
+        first_filter_size = additional_params['first_filter_size']
+        shift_spacing = additional_params['shift_spacing']
+        binocular = additional_params['binocular']
+        stim_dims = additional_params['stim_dims']
 
         self.layers = []
-        with tf.name_scope(self.scope):
-            self.layers.append(siLayer(
-                scope='conv_layer',
-                inputs=inputs,
-                filter_size=first_filter_width,
-                shift_spacing=shift_spacing,
-                binocular=binocular,
-                input_dims=layer_sizes[0],
-                num_filters=layer_sizes[1],
-                activation_func=activation_funcs[0],
-                weights_initializer=weights_initializer[0],
-                biases_initializer=biases_initializer[0],
-                reg_initializer=reg_initializer,
-                num_inh=num_inh[0],
-                pos_constraint=pos_constraint[0],
-                log_activations=log_activations))
-            inputs = self.layers[0].outputs
+        self.layers.append(
+            siLayer( scope='conv_layer',
+                     inputs = inputs,
+                     filter_size = first_filter_size,
+                     shift_spacing = shift_spacing,
+                     binocular =binocular,
+                     input_dims = stim_dims,
+                     num_filters = layer_sizes[1],
+                     activation_func = network_params['activation_funcs'][0],
+                     weights_initializer = network_params['weights_initializers'][0],
+                     biases_initializer = network_params['biases_initializers'][0],
+                     reg_initializer = network_params['reg_initializer'],
+                     num_inh = network_params['num_inh_list'][0],
+                     pos_constraint = network_params['pos_constraints'][0],
+                     log_activations = network_params['log_activations'] ))
 
-            # num_inputs to next layer is adjusted by number of shifts, so recalculate
-            layer_sizes[1]=self.layers[0].num_outputs
-            # Attach rest of layers
-            for layer in range(1,self.num_layers):
-                self.layers.append(Layer(
-                    scope='layer_%i' % layer,
-                    inputs=inputs,
-                    num_inputs=layer_sizes[layer],
-                    num_outputs=layer_sizes[layer + 1],
-                    activation_func=activation_funcs[layer],
-                    weights_initializer=weights_initializer[layer],
-                    biases_initializer=biases_initializer[layer],
-                    reg_initializer=reg_initializer,
-                    num_inh=num_inh[layer],
-                    pos_constraint=pos_constraint[layer],
-                    log_activations=log_activations))
-                inputs = self.layers[-1].outputs
+        # num_inputs to next layer is adjusted by number of shifts, so recalculate
+        inputs = self.layers[0].outputs
+        layer_sizes[1]=self.layers[0].num_outputs
 
-        if log_activations:
-            self.log = True
-        else:
-            self.log = False
-    # END siFFnetwork.__init__
+        # Attach rest of layers -- just like FFNetwork constructor
+        for layer in range(1,self.num_layers):
+            self.layers.append(
+                Layer( scope = 'layer_%i' % layer,
+                       inputs = inputs,
+                       num_inputs = layer_sizes[layer],
+                       num_outputs = layer_sizes[layer + 1],
+                       activation_func=network_params['activation_funcs'][layer],
+                       weights_initializer=network_params['weights_initializers'][layer],
+                       biases_initializer=network_params['biases_initializers'][layer],
+                       reg_initializer=network_params['reg_initializer'],
+                       num_inh=network_params['num_inh_list'][layer],
+                       pos_constraint=network_params['pos_constraints'][layer],
+                       log_activations=network_params['log_activations']))
+            inputs = self.layers[-1].outputs
+
+    # END siFFNetwork._define_network
+
 
 
 class siLayer(Layer):
@@ -526,23 +514,23 @@ class siLayer(Layer):
         else:
             if isinstance(filter_size,list):
                 while len(filter_size) < 3:
-                    filter_size.append(1)
+                    filter_size.extend(1)
             else:
                 filter_size = [filter_size,1,1]
 
         #assert( filter_size[0]*filter_size[1]*filter_size[2] == nevermind)
         # Calculate number of shifts (for output)
         num_shifts = 1
-        if input_dims[0] > 1:
-            num_shifts = np.floor(input_dims[0]/shift_spacing)
+
         if input_dims[1] > 1:
-            num_shifts = num_shifts * np.floor(input_dims[1]/shift_spacing)
+            num_shifts = int(np.floor(input_dims[1]/shift_spacing))
+        if input_dims[2] > 1:
+            num_shifts = num_shifts * int(np.floor(input_dims[2]/shift_spacing))
 
         # Set up additional params_dict for siLayer
         siLayer_params = {'binocular': binocular, 'shift_spacing': shift_spacing,
                           'num_shifts': int(num_shifts),
                           'input_dims': input_dims, 'filter_size': filter_size}
-
 
         super(siLayer, self).__init__(
                 scope=scope,
@@ -560,15 +548,18 @@ class siLayer(Layer):
 
         # calculate number of shifts in convolution
         self.num_outputs = int(num_filters*num_shifts)
+        #print('conv LAYER output: ',self.num_outputs)
+
     # END siLayer.__init__
 
-    def _build_graph( self, inputs, params_dict ):
+    def _define_network( self, inputs, params_dict ):
         # push data through layer
 
         # Unfold siLayer-specific parameters for building graph
         binocular = params_dict['binocular']
         shift_spacing = params_dict['shift_spacing']
-        conv_filter_dims = params_dict['filter_size'] + [self.num_outputs]
+        filter_size = params_dict['filter_size']
+        conv_filter_dims = [filter_size[1],filter_size[2],filter_size[0],self.num_outputs]
         stim_dims = [-1]+params_dict['input_dims']
 
         # Make strides list
@@ -578,9 +569,9 @@ class siLayer(Layer):
         if conv_filter_dims[2] > 1:
             strides[2] = shift_spacing
 
-                # Reshape stim and weights into 4-d variables (to be 4-d)
+        # Reshape stim and weights into 4-d variables (to be 4-d), with temporal lags as last dimension
         ws_conv = tf.reshape(self.weights_var,conv_filter_dims)
-        shaped_inputs = tf.reshape(inputs, stim_dims)
+        shaped_inputs = tf.transpose( tf.reshape(inputs, stim_dims), perm=[0,2,3,1] )
 
         # pre = tf.add(tf.matmul(inputs, self.weights_var), self.biases_var)
         if binocular is False:
@@ -595,7 +586,7 @@ class siLayer(Layer):
 
         # self.num_outputs = pre.get_shape()[0].value
         # print('Conv outputs = ''%d''' % self.num_outputs)
-        # print(self.num_outputs)
+        # print('inside ',self.num_outputs)
 
         if self.ei_mask_var is not None:
             post = tf.multiply(tf.add(self.activation_func(pre), self.biases_var),
