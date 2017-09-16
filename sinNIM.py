@@ -559,9 +559,14 @@ class siLayer(Layer):
         binocular = params_dict['binocular']
         shift_spacing = params_dict['shift_spacing']
         filter_size = params_dict['filter_size']
-        conv_filter_dims = [filter_size[1],filter_size[2],filter_size[0],self.num_outputs]
-        stim_dims = [-1]+params_dict['input_dims']
+        input_dims = params_dict['input_dims']
+        dim_order=[2,1,0]
+        conv_filter_dims = [filter_size[dim_order[0]], filter_size[dim_order[1]], filter_size[dim_order[2]], self.num_outputs]
 
+        input_dims = [-1,input_dims[dim_order[0]],input_dims[dim_order[1]],input_dims[dim_order[2]]]
+        print(conv_filter_dims)
+        print(input_dims)
+        print('weights shape =', self.weights.shape)
         # Make strides list
         strides = [1,1,1,1]
         if conv_filter_dims[1]>1:
@@ -570,16 +575,20 @@ class siLayer(Layer):
             strides[2] = shift_spacing
 
         # Reshape stim and weights into 4-d variables (to be 4-d), with temporal lags as last dimension
-        ws_conv = tf.reshape(self.weights_var,conv_filter_dims)
-        shaped_inputs = tf.transpose( tf.reshape(inputs, stim_dims), perm=[0,2,3,1] )
+        ws_conv = tf.reshape( tf.transpose(self.weights_var,perm=[1,0]), conv_filter_dims )
+
+        shaped_input = tf.reshape( tf.transpose(inputs,perm=[1,0]), input_dims)
+
+        #ws_conv = tf.transpose(ws_conv,perm=[1,2,0,3])
+        #shaped_input = tf.transpose(shaped_input,perm=[0,2,3,1])
 
         # pre = tf.add(tf.matmul(inputs, self.weights_var), self.biases_var)
         if binocular is False:
-            pre = tf.nn.conv2d( shaped_inputs, ws_conv, strides, padding='SAME')
+            pre = tf.nn.conv2d( shaped_input, ws_conv, strides, padding='SAME' ) #, data_format="NCHW")
         else:
             NX = params_dict['input_dims'][1]/2
-            stimL = tf.slice( shaped_inputs, [0,0,0,0], [-1,NX,-1,-1] )
-            stimR = tf.slice( shaped_inputs, [0,NX,0,0], [-1,NX,-1,-1] )
+            stimL = tf.slice( shaped_input, [0,0,0,0], [-1,NX,-1,-1] )
+            stimR = tf.slice( shaped_input, [0,NX,0,0], [-1,NX,-1,-1] )
             pre = tf.concat(
                 tf.nn.conv2d(stimL, ws_conv, strides, padding='SAME'),
                 tf.nn.conv2d(stimR, ws_conv, strides, padding='SAME'))
@@ -594,7 +603,8 @@ class siLayer(Layer):
         else:
             post = tf.add(self.activation_func(pre), self.biases_var)
 
-        self.outputs = tf.reshape( post, [-1, self.num_outputs*params_dict['num_shifts']] )
+        self.outputs = tf.reshape( tf.transpose(post), [-1, self.num_outputs*params_dict['num_shifts']] )
+        #self.outputs = tf.reshape(post, [-1,self.num_outputs * params_dict['num_shifts']])
 
         if self.log:
             tf.summary.histogram('act_pre', pre)

@@ -425,6 +425,25 @@ class NetworkNIM(Network):
             return LL_neuron
     # END get_LL_neuron
 
+    def generate_prediction(self,input_data, data_indxs=None):
+
+        # check input
+        if input_data.shape[0] != self.num_examples:
+            raise ValueError('Input/output data dims must match model values')
+
+        if data_indxs is None:
+            data_indxs = np.arange(self.num_examples)
+
+        # Generate fake_output data
+        output_data = np.zeros( [len(data_indxs),self.output_size], dtype='float32' )
+
+        with tf.Session(graph=self.graph, config=self.sess_config) as sess:
+
+            self._restore_params(sess, input_data, output_data)
+            pred = sess.run(self.network.layers[-1].outputs, feed_dict={self.indices: data_indxs})
+
+            return pred
+    # END NetworkNIM.generate_prediction
 
     def get_reg_pen(self):
         """Return reg penalties in a dictionary"""
