@@ -19,7 +19,7 @@ class NetworkNIM(Network):
 
     Attributes:
         network (FFNetwork object): feedforward network
-        input_size (int): dimensions of stimulus (assuming already an Xmatrix)
+        input_dims (int): dimensions of stimulus (up to 3-D)
         noise_dist (str): noise distribution used for cost function
 
         activations (list of tf ops): evaluates the layer-wise activations of
@@ -146,17 +146,17 @@ class NetworkNIM(Network):
         else:
             while len(stim_dims) < 3:
                 stim_dims.append(1)
-        input_size = stim_dims[0]*stim_dims[1]*stim_dims[2]
+        self.input_size = stim_dims[0]*stim_dims[1]*stim_dims[2]
 
         # input checking
         if num_subunits is None:
             # This will be LN models (default)
-            layer_sizes = [input_size] + [num_neurons]
+            layer_sizes = [stim_dims] + [num_neurons]
             ei_layers = []
         else:
             if not isinstance(num_subunits,list):
                 num_subunits = [num_subunits]
-            layer_sizes = [input_size] + num_subunits + [num_neurons]
+            layer_sizes = [stim_dims] + num_subunits + [num_neurons]
             if ei_layers is None:
                 ei_layers = [-1]*len(num_subunits)
             assert len(num_subunits) == len(ei_layers), \
@@ -177,7 +177,6 @@ class NetworkNIM(Network):
 
         # set model attributes from input
         self.stim_dims = stim_dims
-        self.input_size = input_size
         self.output_size = num_neurons
         self.activation_functions = act_funcs
         self.noise_dist = noise_dist
@@ -469,10 +468,11 @@ class NetworkNIM(Network):
     # END get_reg_pen
 
 
-    def copy_model( self, target=None,
-                   layers_to_transfer=None,
-                   target_layers=None,
-                   init_type='trunc_normal',tf_seed=0):
+    def copy_model( self, target = None,
+                    layers_to_transfer = None,
+                    target_layers = None,
+                    additional_params = None,
+                    init_type='trunc_normal', tf_seed=0 ):
 
         num_layers = len(self.network.layers)
         if target is None:
@@ -493,20 +493,14 @@ class NetworkNIM(Network):
                     reg_list[reg_type][nn] = self.network.layers[nn].reg.vals[reg_type]
 
             # Make new target
-            target = NetworkNIM( self.stim_dims, self.num_examples,
-                                 num_neurons=self.output_size,
-                                 num_subunits = num_subunits,
-                                 act_funcs = self.activation_functions,
-                                 ei_layers=ei_layers,
-                                 noise_dist=self.noise_dist,
-                                 reg_list=reg_list,
-                                 init_type=init_type,
-                                 learning_alg=self.learning_alg,
-                                 learning_rate=self.learning_rate,
-                                 use_batches = self.use_batches,
-                                 tf_seed=tf_seed,
-                                 use_gpu=self.use_gpu)
+            target = self.create_NIM_copy( num_subunits = num_subunits,
+                                           ei_layers=ei_layers,
+                                           reg_list=reg_list,
+                                           init_type=init_type,
+                                           tf_seed=tf_seed,
+                                           additional_params = additional_params )
             # the rest of the properties will be copied directly, which includes ei_layer stuff, act_funcs
+
 
         # Figure out mapping from self.layers to target.layers
         num_layers_target = len(target.network.layers)
@@ -555,3 +549,23 @@ class NetworkNIM(Network):
 
         return target
     # END make_copy
+
+    def create_NIM_copy( self, num_subunits, ei_layers, reg_list, init_type,
+                        tf_seed, additional_params=None ):
+
+        target = NetworkNIM(self.stim_dims, self.num_examples,
+                            num_neurons=self.output_size,
+                            num_subunits=num_subunits,
+                            act_funcs=self.activation_functions,
+                            ei_layers=ei_layers,
+                            noise_dist=self.noise_dist,
+                            reg_list=reg_list,
+                            init_type=init_type,
+                            learning_alg=self.learning_alg,
+                            learning_rate=self.learning_rate,
+                            use_batches=self.use_batches,
+                            tf_seed=tf_seed,
+                            use_gpu=self.use_gpu )
+
+        return target
+    # END NetworkNIM.create_new_NIM

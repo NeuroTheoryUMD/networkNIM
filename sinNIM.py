@@ -153,7 +153,6 @@ class SInetNIM( NetworkNIM ):
 
         # additional params for siFFNetwork
         additional_params = {
-            'stim_dims': stim_dims,
             'first_filter_size': first_filter_size,
             'shift_spacing': shift_spacing,
             'binocular': binocular }
@@ -183,7 +182,6 @@ class SInetNIM( NetworkNIM ):
 
             self.network = siFFNetwork( inputs=self.data_in_batch,
                                         first_filter_size = additional_params['first_filter_size'],
-                                        stim_dims = additional_params['stim_dims'],
                                         shift_spacing = additional_params['shift_spacing'],
                                         binocular = additional_params['binocular'],
                                         **network_params )
@@ -290,11 +288,10 @@ class siFFNetwork( FFNetwork ):
             self,
             scope=None,
             inputs=None,
+            layer_sizes=None,
             first_filter_size=None,
-            stim_dims=None,
             shift_spacing=1,
             binocular=False,
-            layer_sizes=None,
             activation_funcs='relu',
             weights_initializer='trunc_normal',
             biases_initializer='zeros',
@@ -307,8 +304,8 @@ class siFFNetwork( FFNetwork ):
         Args:
             scope (str): name scope for network
             inputs (tf Tensor or placeholder): input to network
-            layer_sizes (list of ints): list of layer sizes, including input
-                and output
+            layer_sizes (list of ints): list of layer sizes, including input and output.
+                Its firs element can be a list, corresponding to multi-dimensional input.
             activation_funcs (str or list of strs, optional): pointwise
                 function for each layer; replicated if a single element.
                 See Layer class for options.
@@ -336,23 +333,20 @@ class siFFNetwork( FFNetwork ):
         """
 
         # Format of stim_dims
-        if stim_dims is None:
-            # then default to single 1-dimensional input
-            stim_dims = [1,layer_sizes[0],1]
-        else:
-            if isinstance(stim_dims,list):
-                while len(stim_dims)<3:
-                    stim_dims.append(1)
-
-        assert layer_sizes[0] == stim_dims[0]*stim_dims[1]*stim_dims[2], \
-            'Stimulus dimensions do not match first layer size.'
+        #stim_dims = layer_sizes[0]
+        #if isinstance( stim_dims, list ):
+        #    while len(stim_dims) < 3:
+        #        stim_dims.append(1)
+        #else:
+        #    # then default to single 1-dimensional input
+        #    stim_dims = [1,stim_dims,1]
 
         # Package si-specific parameters
         additional_params = {
             'first_filter_size': first_filter_size,
             'shift_spacing': shift_spacing,
-            'binocular': binocular,
-            'stim_dims': stim_dims }
+            'binocular': binocular }
+        #'stim_dims': stim_dims }
 
         super(siFFNetwork, self).__init__(
             scope = scope,
@@ -378,7 +372,6 @@ class siFFNetwork( FFNetwork ):
         first_filter_size = additional_params['first_filter_size']
         shift_spacing = additional_params['shift_spacing']
         binocular = additional_params['binocular']
-        stim_dims = additional_params['stim_dims']
 
         self.layers = []
         self.layers.append(
@@ -386,8 +379,8 @@ class siFFNetwork( FFNetwork ):
                      inputs = inputs,
                      filter_size = first_filter_size,
                      shift_spacing = shift_spacing,
-                     binocular =binocular,
-                     input_dims = stim_dims,
+                     binocular = binocular,
+                     input_dims = layer_sizes[0],
                      num_filters = layer_sizes[1],
                      activation_func = network_params['activation_funcs'][0],
                      weights_initializer = network_params['weights_initializers'][0],
