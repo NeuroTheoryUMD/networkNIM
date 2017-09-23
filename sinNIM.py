@@ -63,7 +63,7 @@ class SInetNIM( NetworkNIM ):
             stim_dims,
             num_examples,
             num_neurons=1,
-            num_subunits=None,  # default is LN model with no hidden layers
+            num_subunits=None,
             first_filter_width=None,
             shift_spacing=1,
             binocular=False,
@@ -135,6 +135,7 @@ class SInetNIM( NetworkNIM ):
 
         """
 
+        assert num_subunits is not None, 'Must have at least one hidden layer for a sinNIM.'
 
         # Make stim_dimensions with default of single dimension correspond to space
         if isinstance(stim_dims,list):
@@ -176,109 +177,80 @@ class SInetNIM( NetworkNIM ):
             use_gpu = use_gpu,
             additional_params = additional_params )
 
+        # Add additional SI-specific parameters
+        self.binocular = binocular
+
     # END SInetNIM.__init__
 
-    def _define_network(self, network_params, additional_params ):
+    def _define_network(self, network_params, additional_params=None ):
 
             self.network = siFFNetwork( inputs=self.data_in_batch,
                                         first_filter_size = additional_params['first_filter_size'],
                                         shift_spacing = additional_params['shift_spacing'],
                                         binocular = additional_params['binocular'],
                                         **network_params )
-
+    # END SInetNIM._define_network
 
     def copy_model( self, target=None,
-                   layers_to_transfer=None,
-                   target_layers=None,
-                   init_type='trunc_normal',tf_seed=0):
+                    layers_to_transfer=None,
+                    target_layers=None,
+                    additional_params=None,
+                    init_type='trunc_normal',tf_seed=0):
 
-        num_layers = len(self.network.layers)
-        if target is None:
-            # Re-derive subunit layers and ei-masks
-            num_subunits = [0]*(num_layers-1)
-            ei_layers = [-1]*(num_layers-1)
-            for nn in range(len(num_subunits)):
-                num_subunits[nn] = self.network.layers[nn].num_outputs
-                if self.network.layers[nn+1].pos_constraint:
-                    ei_layers[nn] = 0  # will copy ei_mask later
-            # Modify convolutional layer subunits
-            num_subunits[0] = int(num_subunits[0] / self.input_size * self.shift_spacing)
+        # Figure out first-filter size
+        filter_width = self.network.layers[0].weights.shape[0]/self.stim_dims[0]
 
-            # Accumulate regularization list from layers
-            reg_list = {}
-            for reg_type, reg_vals in self.network.layers[0].reg.vals.iteritems():
-                reg_list[reg_type] = [None]*num_layers
-            for nn in range(num_layers):
-                for reg_type, reg_vals in self.network.layers[nn].reg.vals.iteritems():
-                    reg_list[reg_type][nn] = self.network.layers[nn].reg.vals[reg_type]
+        # Figure out shift_spacing
+        num_shifts = self.network.layers[0].num_outputs / self.network.layers[0].weights.shape[1]
+        Nspace = self.stim_dims[1]*self.stim_dims[2]
+        shift_spacing = Nspace/num_shifts
 
-            # Make new target
-            target = SInetNIM( self.input_size, self.num_examples,
-                               num_neurons=self.output_size,
-                               num_subunits = num_subunits,
-                               first_filter_size=self.network.layers[0].weights.shape[0],
-                               binocular=self.binocular,
-                               shift_spacing=self.shift_spacing,
-                               act_funcs = self.activation_functions,
-                               ei_layers=ei_layers,
-                               noise_dist=self.noise_dist,
-                               reg_list=reg_list,
-                               init_type=init_type,
-                               learning_alg=self.learning_alg,
-                               learning_rate=self.learning_rate,
-                               use_batches = self.use_batches,
-                               tf_seed=tf_seed,
-                               use_gpu=self.use_gpu)
-
-            # the rest of the properties will be copied directly, which includes ei_layer stuff, act_funcs
-
-        # Figure out mapping from self.layers to target.layers
-        num_layers_target = len(target.network.layers)
-        if layers_to_transfer is not None:
-            assert max(layers_to_transfer) <= num_layers, 'Too many layers to transfer.'
-            if target_layers is None:
-                assert len(layers_to_transfer) <= num_layers_target, 'Too many layers to transfer.'
-                target_layers = range(length(layers_to_transfer))
-        if target_layers is not None:
-            assert max(target_layers) <= num_layers_target, 'Too many layers for target.'
-            if layers_to_transfer is None:
-                assert len(target_layers) <= num_layers, 'Too many target layers.'
-                layers_to_transfer = range(len(target_layers))
-        if num_layers >= num_layers_target:
-            target_copy = range(num_layers_target)
-            if target_layers is None:
-                self_copy = target_copy  # then default is copy the top_most layers
+        # Adjust if doing 2-dimensions in space
+        if (self.stim_dims[1]>1) and ((self.stim_dims[2]>1)):
+            shift_spacing = np.sqrt(Nspace/num_shifts)
+            if filter_width == Nspace:
+                filter_width = [self.stim_dims[2],self.stim_dims[1]]  # if default to stim dimensions
             else:
-                self_copy = target_layers
-        else:
-            self_copy = range(num_layers)
-            if target_layers is None:
-                target_copy = self_copy # then default is copy the top_most layers
-            else:
-                target_copy = target_layers
-        assert len(target_copy) == len(self_copy), 'Number of targets and transfers must match.'
+                filter_width = np.sqrt(filter_width) # if entered lower filter width, it will be a square
 
-        # Copy information from self to new target NIM
-        for nn in range(len(self_copy)):
-            self_layer = self.network.layers[self_copy[nn]]
-            tar = target_copy[nn]
+        # Also might need to modify outputs of first layer
 
-            # Copy remaining layer properties
-            target.network.layers[tar].ei_mask = self_layer.ei_mask
+        additional_params = {'first_filter_size': int(filter_width),
+                             'binocular': self.binocular,
+                             'shift_spacing': int(shift_spacing) }
 
-            if self_layer.num_outputs <= target.network.layers[tar].num_outputs:
-                target.network.layers[tar].weights[:,0:self_layer.num_outputs] \
-                    = self_layer.weights
-                target.network.layers[tar].biases[0:self_layer.num_outputs] \
-                    = self_layer.biases
-            else:
-                target.network.layers[tar].weights = \
-                    self_layer.weights[:,0:target.network.layers[tar].num_outputs]
-                target.network.layers[tar].biases = \
-                    self_layer.biases[0:target.network.layers[tar].num_outputs]
-
+        target = super(SInetNIM, self).copy_model(
+            target = target,
+            layers_to_transfer = layers_to_transfer,
+            target_layers = target_layers,
+            additional_params = additional_params,
+            init_type=init_type, tf_seed=tf_seed )
+        # the rest of the properties will be copied directly, which includes ei_layer stuff, act_funcs
         return target
     # END SInetNIM.make_copy
+
+    def create_NIM_copy( self, num_subunits=None, ei_layers=None, reg_list=None, init_type=None,
+                        tf_seed=None, additional_params=None ):
+
+        target = SInetNIM( self.stim_dims, self.num_examples,
+                           num_neurons = self.output_size,
+                           num_subunits = num_subunits,
+                           first_filter_width = additional_params['first_filter_size'],
+                           shift_spacing = additional_params['shift_spacing'],
+                           binocular = additional_params['binocular'],
+                           act_funcs=self.activation_functions,
+                           ei_layers=ei_layers,
+                           noise_dist=self.noise_dist,
+                           reg_list=reg_list,
+                           init_type=init_type,
+                           learning_alg=self.learning_alg,
+                           learning_rate=self.learning_rate,
+                           use_batches=self.use_batches,
+                           tf_seed=tf_seed,
+                           use_gpu=self.use_gpu)
+
+        return target
+    # END NetworkNIM.create_new_NIM
 
 
 class siFFNetwork( FFNetwork ):
@@ -364,7 +336,7 @@ class siFFNetwork( FFNetwork ):
     # END siFFnetwork.__init__
 
 
-    def _define_network( self, inputs, network_params, additional_params ):
+    def _define_network( self, inputs, network_params, additional_params=None ):
 
         # Pull out network params
         layer_sizes = network_params['layer_sizes']
@@ -540,12 +512,13 @@ class siLayer(Layer):
                 additional_params_dict=siLayer_params )
 
         # calculate number of shifts in convolution
+        self.num_filters = num_filters
         self.num_outputs = int(num_filters*num_shifts)
         #print('conv LAYER output: ',self.num_outputs)
 
     # END siLayer.__init__
 
-    def _define_network( self, inputs, params_dict ):
+    def _define_network( self, inputs, params_dict=None ):
         # push data through layer
 
         # Unfold siLayer-specific parameters for building graph
@@ -587,8 +560,6 @@ class siLayer(Layer):
                 tf.nn.conv2d(stimR, ws_conv, strides, padding='SAME'))
 
         # self.num_outputs = pre.get_shape()[0].value
-        # print('Conv outputs = ''%d''' % self.num_outputs)
-        # print('inside ',self.num_outputs)
 
         if self.ei_mask_var is not None:
             post = tf.multiply(tf.add(self.activation_func(pre), self.biases_var),

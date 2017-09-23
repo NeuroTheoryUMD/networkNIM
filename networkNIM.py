@@ -480,7 +480,7 @@ class NetworkNIM(Network):
             num_subunits = [0]*(num_layers-1)
             ei_layers = [-1]*(num_layers-1)
             for nn in range(len(num_subunits)):
-                num_subunits[nn] = self.network.layers[nn].num_outputs
+                num_subunits[nn] = self.network.layers[nn].num_filters
                 if self.network.layers[nn+1].pos_constraint:
                     ei_layers[nn] = 0  # will copy ei_mask later
 
