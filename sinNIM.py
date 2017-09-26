@@ -526,13 +526,21 @@ class siLayer(Layer):
         shift_spacing = params_dict['shift_spacing']
         filter_size = params_dict['filter_size']
         input_dims = params_dict['input_dims']
-        dim_order=[2,1,0]
-        conv_filter_dims = [filter_size[dim_order[0]], filter_size[dim_order[1]], filter_size[dim_order[2]], self.num_outputs]
+        # Note: if reshape was like numpy, would be 2,1,0. Instead, reshape first, and then
+        # permute dimensions for the convolution
+        dim_order=[0,1,2]
+        #conv_filter_dims = [filter_size[dim_order[0]], filter_size[dim_order[1]],
+        #                    filter_size[dim_order[2]], self.num_outputs]
+        conv_filter_dims = [filter_size[dim_order[0]], filter_size[dim_order[1]],
+                            filter_size[dim_order[2]], self.num_outputs ]
 
-        input_dims = [-1,input_dims[dim_order[0]],input_dims[dim_order[1]],input_dims[dim_order[2]]]
-        print(conv_filter_dims)
-        print(input_dims)
-        print('weights shape =', self.weights.shape)
+        # Note: its not clear if -1 should go at beginning or end (see above). If at end, needs to be
+        # permuted to the beginning before being used.
+        input_dims = [input_dims[dim_order[0]],input_dims[dim_order[1]],input_dims[dim_order[2]],-1]
+        #print(conv_filter_dims)
+        #print(input_dims)
+        #print('weights shape =', self.weights.shape)
+
         # Make strides list
         strides = [1,1,1,1]
         if conv_filter_dims[1]>1:
@@ -541,9 +549,12 @@ class siLayer(Layer):
             strides[2] = shift_spacing
 
         # Reshape stim and weights into 4-d variables (to be 4-d), with temporal lags as last dimension
-        ws_conv = tf.reshape( tf.transpose(self.weights_var,perm=[1,0]), conv_filter_dims )
+        # ws_conv = tf.reshape(self.weights_var, conv_filter_dims)
+        ws_conv = tf.transpose( tf.reshape(self.weights_var, conv_filter_dims), perm = [2,1,0,3] )
+        #ws_conv = tf.transpose(tf.reshape(self.weights_var, conv_filter_dims), perm=[3, 2, 1, 0])
 
-        shaped_input = tf.reshape( tf.transpose(inputs,perm=[1,0]), input_dims)
+        # shaped_input = tf.transpose( tf.reshape(inputs, input_dims), perm=[3,0,1,2] )
+        shaped_input = tf.transpose(tf.reshape(inputs, input_dims), perm=[3, 2, 1, 0])
 
         #ws_conv = tf.transpose(ws_conv,perm=[1,2,0,3])
         #shaped_input = tf.transpose(shaped_input,perm=[0,2,3,1])
@@ -559,15 +570,22 @@ class siLayer(Layer):
                 tf.nn.conv2d(stimL, ws_conv, strides, padding='SAME'),
                 tf.nn.conv2d(stimR, ws_conv, strides, padding='SAME'))
 
-        # self.num_outputs = pre.get_shape()[0].value
-
         if self.ei_mask_var is not None:
             post = tf.multiply(tf.add(self.activation_func(pre), self.biases_var),
                                self.ei_mask_var)
         else:
             post = tf.add(self.activation_func(pre), self.biases_var)
 
-        self.outputs = tf.reshape( tf.transpose(post), [-1, self.num_outputs*params_dict['num_shifts']] )
+        x = tf.reshape(post,[self.num_outputs * params_dict['num_shifts'],-1])
+        #x = tf.transpose(post,perm=[1,2,3,0])
+        print('x: ', x)
+        # One that works: self.outputs = tf.reshape( tf.transpose(post), [-1, self.num_outputs*params_dict['num_shifts']] )
+        self.outputs = tf.reshape( x, [-1,self.num_outputs * params_dict['num_shifts']])
+        print('outputs: ', self.outputs)
+        #self.outputs = tf.transpose(x)
+        #print([ self.num_filters*params_dict['num_shifts'] ,-1 ])
+
+        #self.outputs = tf.reshape( post, [ self.num_filters*params_dict['num_shifts'] ,-1 ] )
         #self.outputs = tf.reshape(post, [-1,self.num_outputs * params_dict['num_shifts']])
 
         if self.log:
