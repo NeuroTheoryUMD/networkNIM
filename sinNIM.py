@@ -364,15 +364,15 @@ class siFFNetwork( FFNetwork ):
 
         # num_inputs to next layer is adjusted by number of shifts, so recalculate
         inputs = self.layers[0].outputs
-        layer_sizes[1]=self.layers[0].num_outputs
+        layer_sizes[1]=self.layers[0].output_dims
 
         # Attach rest of layers -- just like FFNetwork constructor
         for layer in range(1,self.num_layers):
             self.layers.append(
                 Layer( scope = 'layer_%i' % layer,
                        inputs = inputs,
-                       num_inputs = layer_sizes[layer],
-                       num_outputs = layer_sizes[layer + 1],
+                       input_dims = layer_sizes[layer],
+                       output_dims = layer_sizes[layer + 1],
                        activation_func=network_params['activation_funcs'][layer],
                        weights_initializer=network_params['weights_initializers'][layer],
                        biases_initializer=network_params['biases_initializers'][layer],
@@ -485,23 +485,21 @@ class siLayer(Layer):
 
         #assert( filter_size[0]*filter_size[1]*filter_size[2] == nevermind)
         # Calculate number of shifts (for output)
-        num_shifts = 1
-
+        num_shifts = [1,1]
         if input_dims[1] > 1:
-            num_shifts = int(np.floor(input_dims[1]/shift_spacing))
+            num_shifts[0] = int(np.floor(input_dims[1]/shift_spacing))
         if input_dims[2] > 1:
-            num_shifts = num_shifts * int(np.floor(input_dims[2]/shift_spacing))
+            num_shifts[1] = int(np.floor(input_dims[2]/shift_spacing))
 
         # Set up additional params_dict for siLayer
         siLayer_params = {'binocular': binocular, 'shift_spacing': shift_spacing,
-                          'num_shifts': int(num_shifts),
-                          'input_dims': input_dims, 'filter_size': filter_size}
+                          'num_shifts': num_shifts, 'filter_size': filter_size}
 
         super(siLayer, self).__init__(
                 scope=scope,
                 inputs=inputs,
-                num_inputs=filter_size,   # Note difference from layer
-                num_outputs=num_filters,   # Note difference from layer
+                input_dims = filter_size,   # Note difference from layer
+                output_dims = num_filters,   # Note difference from layer
                 activation_func=activation_func,
                 weights_initializer=weights_initializer,
                 biases_initializer=biases_initializer,
@@ -513,7 +511,7 @@ class siLayer(Layer):
 
         # calculate number of shifts in convolution
         self.num_filters = num_filters
-        self.num_outputs = int(num_filters*num_shifts)
+        self.output_dims = [num_filters] + num_shifts  # note this is implicitly multi-dimensional
         #print('conv LAYER output: ',self.num_outputs)
 
     # END siLayer.__init__
@@ -525,18 +523,18 @@ class siLayer(Layer):
         binocular = params_dict['binocular']
         shift_spacing = params_dict['shift_spacing']
         filter_size = params_dict['filter_size']
-        input_dims = params_dict['input_dims']
+        num_shifts = params_dict['num_shifts']
+
         # Note: if reshape was like numpy, would be 2,1,0. Instead, reshape first, and then
         # permute dimensions for the convolution
         dim_order=[0,1,2]
-        #conv_filter_dims = [filter_size[dim_order[0]], filter_size[dim_order[1]],
-        #                    filter_size[dim_order[2]], self.num_outputs]
         conv_filter_dims = [filter_size[dim_order[0]], filter_size[dim_order[1]],
-                            filter_size[dim_order[2]], self.num_outputs ]
+                            filter_size[dim_order[2]], self.num_filters ]
 
         # Note: its not clear if -1 should go at beginning or end (see above). If at end, needs to be
         # permuted to the beginning before being used.
-        input_dims = [input_dims[dim_order[0]],input_dims[dim_order[1]],input_dims[dim_order[2]],-1]
+        input_dims = [self.input_dims[dim_order[0]], self.input_dims[dim_order[1]],
+                      self.input_dims[dim_order[2]], -1]
         #print(conv_filter_dims)
         #print(input_dims)
         #print('weights shape =', self.weights.shape)
@@ -576,17 +574,10 @@ class siLayer(Layer):
         else:
             post = tf.add(self.activation_func(pre), self.biases_var)
 
-        x = tf.reshape(post,[self.num_outputs * params_dict['num_shifts'],-1])
-        #x = tf.transpose(post,perm=[1,2,3,0])
-        print('x: ', x)
         # One that works: self.outputs = tf.reshape( tf.transpose(post), [-1, self.num_outputs*params_dict['num_shifts']] )
-        self.outputs = tf.reshape( x, [-1,self.num_outputs * params_dict['num_shifts']])
-        print('outputs: ', self.outputs)
-        #self.outputs = tf.transpose(x)
-        #print([ self.num_filters*params_dict['num_shifts'] ,-1 ])
-
-        #self.outputs = tf.reshape( post, [ self.num_filters*params_dict['num_shifts'] ,-1 ] )
-        #self.outputs = tf.reshape(post, [-1,self.num_outputs * params_dict['num_shifts']])
+        x = tf.reshape(post,[self.num_filters *num_shifts[0]*num_shifts[1],-1])
+        #print('x: ', x)
+        self.outputs = tf.reshape( x, [-1, self.num_filters*num_shifts[0]*num_shifts[1]] )
 
         if self.log:
             tf.summary.histogram('act_pre', pre)
