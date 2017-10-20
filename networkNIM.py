@@ -532,20 +532,23 @@ class NetworkNIM(Network):
         for nn in range(len(self_copy)):
             self_layer = self.network.layers[self_copy[nn]]
             tar = target_copy[nn]
+            self_num_outputs = self_layer.output_dims[0]*self_layer.output_dims[1]*self_layer.output_dims[2]
+            tar_num_outputs = target.network.layers[tar].output_dims[0]\
+                              *target.network.layers[tar].output_dims[1]*target.network.layers[tar].output_dims[2]
 
             # Copy remaining layer properties
             target.network.layers[tar].ei_mask = self_layer.ei_mask
 
-            if self_layer.num_outputs <= target.network.layers[tar].num_outputs:
-                target.network.layers[tar].weights[:,0:self_layer.num_outputs] \
+            if self_num_outputs <= tar_num_outputs:
+                target.network.layers[tar].weights[:,0:self_num_outputs] \
                     = self_layer.weights
-                target.network.layers[tar].biases[0:self_layer.num_outputs] \
+                target.network.layers[tar].biases[0:self_num_outputs] \
                     = self_layer.biases
             else:
                 target.network.layers[tar].weights = \
-                    self_layer.weights[:,0:target.network.layers[tar].num_outputs]
+                    self_layer.weights[:,0:tar_num_outputs]
                 target.network.layers[tar].biases = \
-                    self_layer.biases[0:target.network.layers[tar].num_outputs]
+                    self_layer.biases[0:tar_num_outputs]
 
         return target
     # END make_copy
