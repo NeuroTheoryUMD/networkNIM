@@ -7,9 +7,9 @@ import numpy as np
 import tensorflow as tf
 
 from FFnetwork.ffnetwork import FFNetwork
-from FFnetwork.network import Network
+#from FFnetwork.network import Network
 from FFnetwork.layer import Layer
-from FFnetwork.regularization import Regularization
+#from FFnetwork.regularization import Regularization
 from .networkNIM import NetworkNIM
 
 
@@ -58,61 +58,40 @@ class SInetNIM( NetworkNIM ):
 
     """
 
-    def __init__(
-            self,
-            stim_dims,
-            num_examples,
-            num_neurons=1,
-            num_subunits=None,
-            first_filter_width=None,
-            shift_spacing=1,
-            binocular=False,
-            act_funcs='relu',
-            ei_layers=None,
-            noise_dist='poisson',
-            reg_list=None,
-            init_type='trunc_normal',
-            learning_alg='lbfgs',
-            learning_rate=1e-3,
-            reg_initializer=None,
-            use_batches=False,
-            tf_seed=0,
-            use_gpu=None):
+    def __init__( self,
+                  network_params,
+                  num_examples,
+                  reg_list = None,
+                  noise_dist='poisson',
+                  learning_alg='lbfgs',
+                  learning_rate=1e-3,
+                  use_batches=False,
+                  tf_seed=0,
+                  use_gpu=None ):
         """Constructor for SInetNIM class: identical to NetworkNIM class other than
             building a slightly different graph (otherwise transparent_
 
         Args:
-            stim_dims: int representing number of stimulus dimensions
-                (must match X-matrix)
+            network_params: created using 'createNIMparams', which has at least the following
+                arguments that get passed to FFnetwork (and possibly more):
+                -> layer_sizes (list of integers, or 3-d lists of integers)
+                -> activation_funcs (list of strings)
+                -> pos_constraints (list of Booleans)
+                -> reg_list (dictionary for regularization-class)
+                -> num_conv_layers
+                -> max_layer
+                -> shift_spacing
+                -> binocular
             num_examples (int): total number of examples in training data
-            num_neurons: number of neurons to fit simultaneously
-            num_subunits: (list of ints, or empty list), listing number of
-                subunits at each stage for LN models, leave blank [], and NIM
-                have number of subunits as such: [3]
-            [Note: 'layer_sizes' for FFNetwork calculated from the above
-                quantities]
-            ei_layers: intermediate layers can be constrained to be composed of
-                E and I neurons. This should be a list of the length of the
-                num_subunits, with the number of Inh neurons defined for each
-                layer. This will make that subunit layer have a certain number
-                of inhibitory outputs, and the next layer to be constrained to
-                have positive weights. Use '-1's for layers where there should
-                be no constraints
-            act_funcs (str or list of strs, optional): activation function for
-                network layers; replicated if a single element.
-                ['relu'] | 'sigmoid' | 'tanh' | 'identity' | 'softplus' |
-                'elu' | 'quad'
             noise_dist (str, optional): noise distribution used by network
                 ['gaussian'] | 'poisson' | 'bernoulli'
             init_type (str or list of strs, optional): initialization
                 used for network weights; replicated if a single element.
                 ['trunc_normal'] | 'normal' | 'zeros' | 'xavier'
-            learning_alg (str, optional): algorithm used for learning
-                parameters.
+            learning_alg (str, optional): algorithm used for learning parameters.
                 ['lbfgs'] | 'adam'
             learning_rate (float, optional): learning rate used by the
                 gradient descent-based optimizers ('adam'). Default is 1e-3.
-            reg_initializer (dict):
             use_batches (boolean, optional): determines how data is fed to
                 model; if False, all data is pinned to variables used
                 throughout fitting; if True, a data slicer and batcher are
@@ -135,60 +114,48 @@ class SInetNIM( NetworkNIM ):
 
         """
 
-        assert num_subunits is not None, 'Must have at least one hidden layer for a sinNIM.'
+        assert len(network_params['layer_sizes']) > 2, 'Must have at least one hidden layer for a sinNIM.'
 
         # Make stim_dimensions with default of single dimension correspond to space
-        if isinstance(stim_dims,list):
+        stim_dims = network_params['layer_sizes'][0]
+        if isinstance(stim_dims, list):
             while len(stim_dims)<3:
                 stim_dims.append(1)
         else:
             stim_dims = [1,stim_dims,1]
 
         # Work out filter size (from filter_widths and num lags)
-        if first_filter_width is None:
+        if network_params['first_filter_width'] is None:
             first_filter_size = stim_dims
         else:
-            first_filter_size = [stim_dims[0],first_filter_width,1]  # assumes 1-d filter here
+            first_filter_size = [stim_dims[0],network_params['first_filter_width'],1]  # assumes 1-d filter here
             if stim_dims[2] > 1:
-                first_filter_size[2] = first_filter_width  # then 2-d filter
-
-        # additional params for siFFNetwork
-        additional_params = {
-            'first_filter_size': first_filter_size,
-            'shift_spacing': shift_spacing,
-            'binocular': binocular }
+                first_filter_size[2] = network_params['first_filter_width']  # then 2-d filter
+        network_params['first_filter_size'] = first_filter_size
 
         # call __init__() method of super-super class
         super(SInetNIM, self).__init__(
-            stim_dims = stim_dims,
-            num_examples = num_examples,
-            num_neurons = num_neurons,
-            num_subunits = num_subunits,
-            act_funcs = act_funcs,
-            ei_layers = ei_layers,
+            network_params, num_examples,
             noise_dist = noise_dist,
             reg_list = reg_list,
-            init_type = init_type,
             learning_alg= learning_alg,
             learning_rate = learning_rate,
-            reg_initializer = reg_initializer,
             use_batches = use_batches,
             tf_seed = tf_seed,
-            use_gpu = use_gpu,
-            additional_params = additional_params )
+            use_gpu = use_gpu )
 
-        # Add additional SI-specific parameters
-        self.binocular = binocular
+        # Add additional SIN-specific parameters
+        self.num_conv_layers = network_params['num_conv_layers']
+        self.max_layer = network_params['max_layer']
+        self.binocular = network_params['binocular']
 
     # END SInetNIM.__init__
 
-    def _define_network(self, network_params, additional_params=None ):
+    def _define_network(self, network_params ):
 
-            self.network = siFFNetwork( inputs=self.data_in_batch,
-                                        first_filter_size = additional_params['first_filter_size'],
-                                        shift_spacing = additional_params['shift_spacing'],
-                                        binocular = additional_params['binocular'],
-                                        **network_params )
+        self.network = siFFNetwork( scope = 'siFFnetwork',
+                                    inputs = self.data_in_batch,
+                                    params_dict = network_params )
     # END SInetNIM._define_network
 
     def copy_model( self, target=None,
@@ -230,25 +197,15 @@ class SInetNIM( NetworkNIM ):
     # END SInetNIM.make_copy
 
     def create_NIM_copy( self, num_subunits=None, ei_layers=None, reg_list=None, init_type=None,
-                        tf_seed=None, additional_params=None ):
+                         tf_seed=None, additional_params=None ):
 
-        target = SInetNIM( self.stim_dims, self.num_examples,
-                           num_neurons = self.output_size,
-                           num_subunits = num_subunits,
-                           first_filter_width = additional_params['first_filter_size'],
-                           shift_spacing = additional_params['shift_spacing'],
-                           binocular = additional_params['binocular'],
-                           act_funcs=self.activation_functions,
-                           ei_layers=ei_layers,
+        target = SInetNIM( self.network_params, self.num_examples,
                            noise_dist=self.noise_dist,
-                           reg_list=reg_list,
-                           init_type=init_type,
                            learning_alg=self.learning_alg,
                            learning_rate=self.learning_rate,
                            use_batches=self.use_batches,
                            tf_seed=tf_seed,
-                           use_gpu=self.use_gpu)
-
+                           use_gpu=self.use_gpu )
         return target
     # END NetworkNIM.create_new_NIM
 
@@ -256,118 +213,94 @@ class SInetNIM( NetworkNIM ):
 class siFFNetwork( FFNetwork ):
     """Implementation of siFFNetwork"""
 
-    def __init__(
-            self,
-            scope=None,
-            inputs=None,
-            layer_sizes=None,
-            first_filter_size=None,
-            shift_spacing=1,
-            binocular=False,
-            activation_funcs='relu',
-            weights_initializer='trunc_normal',
-            biases_initializer='zeros',
-            reg_initializer=None,
-            num_inh=0,
-            pos_constraint=False,
-            log_activations=False):
+    def __init__( self, scope=None, inputs=None, params_dict=None ):
         """Constructor for Network class
 
         Args:
             scope (str): name scope for network
             inputs (tf Tensor or placeholder): input to network
-            layer_sizes (list of ints): list of layer sizes, including input and output.
-                Its firs element can be a list, corresponding to multi-dimensional input.
-            activation_funcs (str or list of strs, optional): pointwise
-                function for each layer; replicated if a single element.
-                See Layer class for options.
-            weights_initializer (str or list of strs, optional): initializer
-                for the weights in each layer; replicated if a single element.
-                See Layer class for options.
-            biases_initializer (str or list of strs, optional): initializer for
-                the biases in each layer; replicated if a single element.
-                See Layer class for options.
-            reg_initializer (dict): reg_type/vals as key-value pairs to
-                uniformly initialize layer regularization
-            num_inh (None, int or list of ints, optional)
-            pos_constraint (bool or list of bools, optional):
-            log_activations (bool, optional): True to use tf.summary on layer
-                activations
+            params_dict (dictionary with the following fields):
+                SI-NETWORK SPECIFIC:
+                -> first_filter_size: size of filters in first layer, if different than input size
+                    DEFAULT = input size
+                -> shift_spacing (int): convolutional "strides" to be passed back into conv2d
+                    DEFAULT = 1
+                -> binocular (boolean): currently doesn't work
+                    DEFAULT = FALSE
+                    
+                INHERITED FFNetwork PARAMS (see FFNetwork documentation): 
+                -> layer_sizes (list of ints)
+                -> activation_funcs (str or list of strs, optional)
+                -> weights_initializer (str or list of strs, optional)
+                -> biases_initializer (str or list of strs, optional)
+                -> reg_initializers (list of dicts)
+                -> num_inh (None, int or list of ints, optional)
+                -> pos_constraint (bool or list of bools, optional):
+                -> log_activations (bool, optional)
 
         Raises:
             TypeError: If `scope` is not specified
             TypeError: If `inputs` is not specified
             TypeError: If `layer_sizes` is not specified
-            ValueError: If `activation_funcs` is not a properly-sized list
-            ValueError: If `weights_initializer` is not a properly-sized list
-            ValueError: If `biases_initializer` is not a properly-sized list
-
         """
-
-        # Format of stim_dims
-        #stim_dims = layer_sizes[0]
-        #if isinstance( stim_dims, list ):
-        #    while len(stim_dims) < 3:
-        #        stim_dims.append(1)
-        #else:
-        #    # then default to single 1-dimensional input
-        #    stim_dims = [1,stim_dims,1]
-
-        # Package si-specific parameters
-        additional_params = {
-            'first_filter_size': first_filter_size,
-            'shift_spacing': shift_spacing,
-            'binocular': binocular }
-        #'stim_dims': stim_dims }
 
         super(siFFNetwork, self).__init__(
             scope = scope,
             inputs = inputs,
-            layer_sizes = layer_sizes,
-            activation_funcs = activation_funcs,
-            weights_initializer = weights_initializer,
-            biases_initializer = biases_initializer,
-            reg_initializer = reg_initializer,
-            num_inh = num_inh,
-            pos_constraint = pos_constraint,
-            log_activations = log_activations,
-            additional_params = additional_params )
-
+            params_dict = params_dict )
     # END siFFnetwork.__init__
 
+    def _define_network( self, inputs, network_params ):
 
-    def _define_network( self, inputs, network_params, additional_params=None ):
-
-        # Pull out network params
+        # Pull out useful params from network_params
         layer_sizes = network_params['layer_sizes']
         # Additional si-specific params
-        first_filter_size = additional_params['first_filter_size']
-        shift_spacing = additional_params['shift_spacing']
-        binocular = additional_params['binocular']
+        first_filter_size = network_params['first_filter_size']
+        shift_spacing = network_params['shift_spacing']
+        binocular = network_params['binocular']
 
         self.layers = []
-        self.layers.append(
-            siLayer( scope='conv_layer',
-                     inputs = inputs,
-                     filter_size = first_filter_size,
-                     shift_spacing = shift_spacing,
-                     binocular = binocular,
-                     input_dims = layer_sizes[0],
-                     num_filters = layer_sizes[1],
-                     activation_func = network_params['activation_funcs'][0],
-                     weights_initializer = network_params['weights_initializers'][0],
-                     biases_initializer = network_params['biases_initializers'][0],
-                     reg_initializer = network_params['reg_initializer'],
-                     num_inh = network_params['num_inh_list'][0],
-                     pos_constraint = network_params['pos_constraints'][0],
-                     log_activations = network_params['log_activations'] ))
+        num_conv_layers = network_params['num_conv_layers']
+        for nn in range(num_conv_layers):
+            self.layers.append(
+                siLayer( scope = 'conv_layer_%i' % nn,
+                         inputs = inputs,
+                         filter_size = first_filter_size,
+                         shift_spacing = shift_spacing,
+                         binocular = binocular,
+                         input_dims = layer_sizes[nn],
+                         num_filters = layer_sizes[nn+1],
+                         activation_func = network_params['activation_funcs'][nn],
+                         weights_initializer = network_params['weights_initializers'][nn],
+                         biases_initializer = network_params['biases_initializers'][nn],
+                         reg_initializer = network_params['reg_initializers'][nn],
+                         num_inh = network_params['num_inh'][nn],
+                         pos_constraint = network_params['pos_constraints'][nn],
+                         log_activations = network_params['log_activations'] ))
 
-        # num_inputs to next layer is adjusted by number of shifts, so recalculate
-        inputs = self.layers[0].outputs
-        layer_sizes[1]=self.layers[0].output_dims
+            # num_inputs to next layer is adjusted by number of shifts, so recalculate
+            inputs = self.layers[-1].outputs
+            layer_sizes[nn+1] = self.layers[nn].output_dims
+
+        # Insert max layer if desired
+        if network_params['max_layer']:
+            self.layers.append(
+                max_layer( scope='max_layer',
+                           inputs=inputs,
+                           input_dims=layer_sizes[num_conv_layers],
+                           output_dims=layer_sizes[num_conv_layers+1],
+                           activation_func=network_params['activation_funcs'][num_conv_layers],
+                           weights_initializer=network_params['weights_initializers'][num_conv_layers],
+                           biases_initializer=network_params['biases_initializers'][num_conv_layers],
+                           reg_initializer=network_params['reg_initializers'][num_conv_layers],
+                           num_inh=network_params['num_inh'][num_conv_layers],
+                           pos_constraint=network_params['pos_constraints'][num_conv_layers],
+                           log_activations=network_params['log_activations']))
+            num_conv_layers = num_conv_layers + 1
+            inputs = self.layers[-1].outputs
 
         # Attach rest of layers -- just like FFNetwork constructor
-        for layer in range(1,self.num_layers):
+        for layer in range(num_conv_layers, self.num_layers):
             self.layers.append(
                 Layer( scope = 'layer_%i' % layer,
                        inputs = inputs,
@@ -376,8 +309,8 @@ class siFFNetwork( FFNetwork ):
                        activation_func=network_params['activation_funcs'][layer],
                        weights_initializer=network_params['weights_initializers'][layer],
                        biases_initializer=network_params['biases_initializers'][layer],
-                       reg_initializer=network_params['reg_initializer'],
-                       num_inh=network_params['num_inh_list'][layer],
+                       reg_initializer=network_params['reg_initializers'][layer],
+                       num_inh=network_params['num_inh'][layer],
                        pos_constraint=network_params['pos_constraints'][layer],
                        log_activations=network_params['log_activations']))
             inputs = self.layers[-1].outputs
@@ -483,7 +416,10 @@ class siLayer(Layer):
             else:
                 filter_size = [filter_size,1,1]
 
-        #assert( filter_size[0]*filter_size[1]*filter_size[2] == nevermind)
+        # If output dimensions already established, just strip out num_filters
+        if isinstance( num_filters, list):
+            num_filters = num_filters[0]
+
         # Calculate number of shifts (for output)
         num_shifts = [1,1]
         if input_dims[1] > 1:
@@ -525,19 +461,16 @@ class siLayer(Layer):
         filter_size = params_dict['filter_size']
         num_shifts = params_dict['num_shifts']
 
-        # Note: if reshape was like numpy, would be 2,1,0. Instead, reshape first, and then
-        # permute dimensions for the convolution
-        dim_order=[0,1,2]
-        conv_filter_dims = [filter_size[dim_order[0]], filter_size[dim_order[1]],
-                            filter_size[dim_order[2]], self.num_filters ]
+        # Reshape of inputs (4-D):
+        input_dims = [self.input_dims[2], self.input_dims[1], self.input_dims[0], -1]
+        # this is reverse-order from Matlab: [space-2, space-1, lags, and num_examples]
+        shaped_input = tf.transpose(tf.reshape(inputs, input_dims), perm=[3, 0, 1, 2])
+        # but needed to put time as first dimension
 
-        # Note: its not clear if -1 should go at beginning or end (see above). If at end, needs to be
-        # permuted to the beginning before being used.
-        input_dims = [self.input_dims[dim_order[0]], self.input_dims[dim_order[1]],
-                      self.input_dims[dim_order[2]], -1]
-        #print(conv_filter_dims)
-        #print(input_dims)
-        #print('weights shape =', self.weights.shape)
+        # Reshape weights (4:D:
+        conv_filter_dims = [filter_size[2], filter_size[1], filter_size[0], self.num_filters ]
+        ws_conv = tf.reshape(self.weights_var, conv_filter_dims)
+        # this is reverse-order from Matlab: [space-2, space-1, lags] and num_filters is explicitly last dim
 
         # Make strides list
         strides = [1,1,1,1]
@@ -546,18 +479,6 @@ class siLayer(Layer):
         if conv_filter_dims[2] > 1:
             strides[2] = shift_spacing
 
-        # Reshape stim and weights into 4-d variables (to be 4-d), with temporal lags as last dimension
-        # ws_conv = tf.reshape(self.weights_var, conv_filter_dims)
-        ws_conv = tf.transpose( tf.reshape(self.weights_var, conv_filter_dims), perm = [2,1,0,3] )
-        #ws_conv = tf.transpose(tf.reshape(self.weights_var, conv_filter_dims), perm=[3, 2, 1, 0])
-
-        # shaped_input = tf.transpose( tf.reshape(inputs, input_dims), perm=[3,0,1,2] )
-        shaped_input = tf.transpose(tf.reshape(inputs, input_dims), perm=[3, 2, 1, 0])
-
-        #ws_conv = tf.transpose(ws_conv,perm=[1,2,0,3])
-        #shaped_input = tf.transpose(shaped_input,perm=[0,2,3,1])
-
-        # pre = tf.add(tf.matmul(inputs, self.weights_var), self.biases_var)
         if binocular is False:
             pre = tf.nn.conv2d( shaped_input, ws_conv, strides, padding='SAME' ) #, data_format="NCHW")
         else:
@@ -569,8 +490,7 @@ class siLayer(Layer):
                 tf.nn.conv2d(stimR, ws_conv, strides, padding='SAME'))
 
         if self.ei_mask_var is not None:
-            post = tf.multiply(tf.add(self.activation_func(pre), self.biases_var),
-                               self.ei_mask_var)
+            post = tf.multiply(tf.add(self.activation_func(pre), self.biases_var), self.ei_mask_var)
         else:
             post = tf.add(self.activation_func(pre), self.biases_var)
 
@@ -583,3 +503,144 @@ class siLayer(Layer):
             tf.summary.histogram('act_pre', pre)
             tf.summary.histogram('act_post', post)
     # END siLayer._build_layer
+
+class max_layer(Layer):
+    """Implementation of layer which limits single weights along specified input dimension.
+    It will always follow the last convolutional layer (siLayer) in siNIM
+
+    Attributes:
+        scope (str): name scope for variables and operations in layer
+        num_inputs (int): number of inputs to layer
+        num_outputs (int): number of outputs of layer
+        outputs (tf Tensor): output of layer
+        num_inh (int): number of inhibitory units in layer
+        weights_ph (tf placeholder): placeholder for weights in layer
+        biases_ph (tf placeholder): placeholder for biases in layer
+        weights_var (tf Tensor): weights in layer
+        biases_var (tf Tensor): biases in layer
+        weights (numpy array): shadow variable of `weights_var` that allows for
+            easier manipulation outside of tf sessions
+        biases (numpy array): shadow variable of `biases_var` that allows for
+            easier manipulation outside of tf sessions
+        activation_func (tf activation function): activation function in layer
+        reg (Regularization object): holds regularizations values and matrices
+            (as tf constants) for layer
+        ei_mask_var (tf constant): mask of +/-1s to multiply output of layer
+        ei_mask (list): mask of +/-1s to multiply output of layer; shadows
+            `ei_mask_tf` for easier manipulation outside of tf sessions
+        pos_constraint (bool): positivity constraint on weights in layer
+        log (bool): use tf summary writers on layer output
+
+    """
+
+    def __init__(
+            self,
+            scope=None,
+            inputs=None,
+            input_dims=None,  # this can be a list up to 3-dimensions
+            output_dims=None,
+            activation_func='relu',
+            weights_initializer='trunc_normal',
+            biases_initializer='zeros',
+            reg_initializer=None,
+            num_inh=0,
+            pos_constraint=False,
+            log_activations=False ):
+        """Constructor for Layer class
+
+        Args:
+            scope (str): name scope for variables and operations in layer
+            inputs (tf Tensor or placeholder): input to layer
+            input_dims (int): dimensions of input data
+            output_dims (int): dimensions of output data
+            activation_func (str, optional): pointwise function applied to
+                output of affine transformation
+                ['relu'] | 'sigmoid' | 'tanh' | 'identity' | 'softplus' | 'elu' | 'quad'
+            weights_initializer (str, optional): initializer for the weights
+                ['trunc_normal'] | 'normal' | 'zeros'
+            biases_initializer (str, optional): initializer for the biases
+                'trunc_normal' | 'normal' | ['zeros']
+            reg_initializer (dict, optional): see Regularizer docs for info
+            num_inh (int, optional): number of inhibitory units in layer
+            pos_constraint (bool, optional): True to constrain layer weights to be
+                positive
+            log_activations (bool, optional): True to use tf.summary on layer
+                activations
+
+        Raises:
+            TypeError: If `variable_scope` is not specified
+            TypeError: If `inputs` is not specified
+            TypeError: If `num_inputs` or `num_outputs` is not specified
+            ValueError: If `num_inh` is greater than total number of units
+            ValueError: If `activation_func` is not a valid string
+            ValueError: If `weights_initializer` is not a valid string
+            ValueError: If `biases_initializer` is not a valid string
+
+        """
+
+        super(max_layer, self).__init__(
+                scope=scope,
+                inputs=inputs,
+                input_dims = input_dims,
+                output_dims = output_dims,
+                activation_func = activation_func,
+                weights_initializer = weights_initializer,
+                biases_initializer = biases_initializer,
+                reg_initializer = reg_initializer,
+                num_inh = num_inh,
+                pos_constraint=pos_constraint,
+                log_activations=log_activations )
+
+        #print('max LAYER output: ',self.num_outputs)
+
+    # END maxLayer.__init__
+
+    def _define_network( self, inputs, params_dict=None ):
+        # push data through max_layer
+
+        # Reshape input and output to handle weights and shifts separately
+        num_shifts = self.input_dims[1]*self.input_dims[2]
+        num_input_filts = self.input_dims[0]
+        shaped_input = tf.transpose( tf.reshape( inputs, [-1,num_shifts,num_input_filts,1] ), perm=[1,2,0,3] )
+
+        if self.pos_constraint:
+            shaped_weights = tf.reshape(
+                tf.maximum(0.0, self.weights_var), [num_shifts, num_input_filts, 1, self.num_filters])
+        else:
+            shaped_weights = tf.reshape( self.weights_var, [num_shifts,num_input_filts,1,self.num_filters] )
+
+        #print(shaped_weights)
+        #print(shaped_input)
+        test = tf.matmul( shaped_input, shaped_weights )
+        print('test', test)
+
+        pre_max_over_shifts = tf.reduce_max( tf.matmul(shaped_input,shaped_weights), axis=0 )
+        print(pre_max_over_shifts)
+        pre_sum_over_filters = tf.reduce_sum( pre_max_over_shifts, axis=0 )
+        print(pre_sum_over_filters)
+        #pre = tf.add( tf.reduce_sum(pre_max_over_shifts), self.biases_var )
+        pre = tf.add( pre_sum_over_filters, self.biases_var)
+
+        if self.ei_mask_var is not None:
+            post = tf.multiply(self.activation_func(pre), self.ei_mask_var)
+        else:
+            post = self.activation_func(pre)
+
+        self.outputs = post
+        print(post)
+        if self.log:
+            tf.summary.histogram('act_pre', pre)
+            tf.summary.histogram('act_post', post)
+        # END maxLayer._define_network
+
+            #dim_order=[0,1,2]
+        #conv_filter_dims = [filter_size[dim_order[0]], filter_size[dim_order[1]],
+        #                    filter_size[dim_order[2]], self.num_filters ]
+
+        # Note: its not clear if -1 should go at beginning or end (see above). If at end, needs to be
+        # permuted to the beginning before being used.
+        #input_dims = [self.input_dims[dim_order[0]], self.input_dims[dim_order[1]],
+        #              self.input_dims[dim_order[2]], -1]
+        #ws_conv = tf.transpose( tf.reshape(self.weights_var, conv_filter_dims), perm = [2,1,0,3] )
+
+        #shaped_input = tf.transpose(tf.reshape(inputs, input_dims), perm=[3, 2, 1, 0])

@@ -13,7 +13,6 @@ import tensorflow as tf
 from FFnetwork.ffnetwork import FFNetwork
 from FFnetwork.network import Network
 
-
 class NetworkNIM(Network):
     """Tensorflow (tf) implementation of network-NIM class
 
@@ -64,45 +63,25 @@ class NetworkNIM(Network):
 
     def __init__(
             self,
-            stim_dims,
+            network_params,
             num_examples,
-            num_neurons=1,
-            num_subunits=None,  # default is LN model with no hidden layers
-            act_funcs='relu',
-            ei_layers=None,
+            reg_list = None,
             noise_dist='poisson',
-            reg_list=None,
-            init_type='trunc_normal',
             learning_alg='lbfgs',
             learning_rate=1e-3,
-            reg_initializer=None,
             use_batches=False,
             tf_seed=0,
-            use_gpu=None,
-            additional_params=None):
+            use_gpu=None ):
         """Constructor for network-NIM class
 
         Args:
-            stim_dims: int or list representing number of stimulus dimensions
-                (must ultimately match X-matrix)
+            network_params: created using 'createNIMparams', which has at least the following
+                arguments that get passed to FFnetwork (and possibly more):
+                -> layer_sizes (list of integers, or 3-d lists of integers)
+                -> activation_funcs (list of strings)
+                -> pos_constraints (list of Booleans)
             num_examples (int): total number of examples in training data
-            num_neurons: number of neurons to fit simultaneously
-            num_subunits: (list of ints, or empty list), listing number of 
-                subunits at each stage for LN models, leave blank [], and NIM 
-                have number of subunits as such: [3]
-            [Note: 'layer_sizes' for FFNetwork calculated from the above 
-                quantities]
-            ei_layers: intermediate layers can be constrained to be composed of
-                E and I neurons. This should be a list of the length of the 
-                num_subunits, with the number of Inh neurons defined for each 
-                layer. This will make that subunit layer have a certain number 
-                of inhibitory outputs, and the next layer to be constrained to 
-                have positive weights. Use '-1's for layers where there should
-                be no constraints
-            act_funcs (str or list of strs, optional): activation function for 
-                network layers; replicated if a single element.
-                ['relu'] | 'sigmoid' | 'tanh' | 'identity' | 'softplus' | 
-                'elu' | 'quad'
+            reg_list (dictionary for regularization-class)
             noise_dist (str, optional): noise distribution used by network
                 ['gaussian'] | 'poisson' | 'bernoulli'
             init_type (str or list of strs, optional): initialization
@@ -113,8 +92,7 @@ class NetworkNIM(Network):
                 ['lbfgs'] | 'adam'
             learning_rate (float, optional): learning rate used by the 
                 gradient descent-based optimizers ('adam'). Default is 1e-3.
-            reg_initializer (dict): 
-            use_batches (boolean, optional): determines how data is fed to 
+            use_batches (boolean, optional): determines how data is fed to
                 model; if False, all data is pinned to variables used 
                 throughout fitting; if True, a data slicer and batcher are 
                 constructed to feed the model shuffled batches throughout 
@@ -136,11 +114,16 @@ class NetworkNIM(Network):
 
         """
 
+        # input checking
+        if num_examples is None:
+            raise ValueError('Must specify number of training examples')
+
         # call __init__() method of super class
         super(NetworkNIM, self).__init__()
 
         # process stim-dims into 3-d dimensions
-        if not isinstance(stim_dims,list):
+        stim_dims = network_params['layer_sizes'][0]
+        if not isinstance(stim_dims, list):
             # then just 1-dimension (place in time)
             stim_dims = [stim_dims,1,1]
         else:
@@ -148,60 +131,23 @@ class NetworkNIM(Network):
                 stim_dims.append(1)
         self.input_size = stim_dims[0]*stim_dims[1]*stim_dims[2]
 
-        # input checking
-        if num_subunits is None:
-            # This will be LN models (default)
-            layer_sizes = [stim_dims] + [num_neurons]
-            ei_layers = []
-        else:
-            if not isinstance(num_subunits,list):
-                num_subunits = [num_subunits]
-            layer_sizes = [stim_dims] + num_subunits + [num_neurons]
-            if ei_layers is None:
-                ei_layers = [-1]*len(num_subunits)
-            assert len(num_subunits) == len(ei_layers), \
-                'ei_layers must have the same length as num_subunits.'
-
-        # Establish positivity constraints
-        self.num_layers = len(layer_sizes)-1
-        pos_constraint = [False]*self.num_layers
-        num_inh_layers = [0]*self.num_layers
-        for nn in range(len(ei_layers)):
-            if ei_layers[nn] >= 0:
-                pos_constraint[nn+1] = True
-                num_inh_layers[nn] = ei_layers[nn]
-
-        # input checking
-        if num_examples is None:
-            raise ValueError('Must specify number of training examples')
 
         # set model attributes from input
         self.stim_dims = stim_dims
-        self.output_size = num_neurons
-        self.activation_functions = act_funcs
+        self.output_size = network_params['layer_sizes'][-1]
+        self.num_layers = len(network_params['layer_sizes'])-1
+        self.activation_functions = network_params['activation_funcs']
         self.noise_dist = noise_dist
         self.learning_alg = learning_alg
         self.learning_rate = learning_rate
         self.num_examples = num_examples
         self.use_batches = use_batches
+        self.network_params = network_params  # kindof redundant, but currently not a better way...
 
-        # params for FFNetwork
-        network_params = {
-            'scope': 'model',
-            'layer_sizes': layer_sizes,
-            'num_inh': num_inh_layers,
-            'activation_funcs': act_funcs,
-            'pos_constraint': pos_constraint,
-            'weights_initializer': init_type,
-            'biases_initializer': 'zeros',
-            'reg_initializer': reg_initializer,
-            'log_activations': False
-        }
-
-        self._build_graph(use_gpu, tf_seed, reg_list, network_params, additional_params )
+        self._build_graph( use_gpu, tf_seed, network_params, reg_list )
     # END networkNIM.__init__
 
-    def _build_graph(self, use_gpu, tf_seed, reg_list, network_params, additional_params=None):
+    def _build_graph(self, use_gpu, tf_seed, network_params, reg_list ):
 
         # for saving and restoring models
         self.graph = tf.Graph()  # must be initialized before graph creation
@@ -225,18 +171,7 @@ class NetworkNIM(Network):
                 self._initialize_data_pipeline()
 
             # initialize weights and create model
-            self._define_network( network_params, additional_params )
-
-            # Initialize regularization, if there is any
-            if reg_list is not None:
-                for reg_type, reg_val_list in reg_list.iteritems():
-                    if not isinstance(reg_val_list, list):
-                        reg_val_list = [reg_val_list]*self.num_layers
-                    assert len(reg_val_list) == self.num_layers, \
-                        'Need to match number of layers with regularization values.'
-                    for nn in range(self.num_layers):
-                        if reg_val_list[nn] is not None:
-                            self.network.layers[nn].reg.vals[reg_type] = reg_val_list[nn]
+            self._define_network( network_params )
 
             # define loss function
             with tf.variable_scope('loss'):
@@ -254,10 +189,11 @@ class NetworkNIM(Network):
             # add variable initialization op to graph
             self.init = tf.global_variables_initializer()
 
-    def _define_network(self, network_params, additional_params=None):
+    def _define_network( self, network_params ):
 
-        self.network = FFNetwork(inputs=self.data_in_batch,
-                                 additional_params=additional_params, **network_params )
+        self.network = FFNetwork( scope = 'FFNetwork',
+                                  inputs = self.data_in_batch,
+                                  params_dict = network_params )
 
     def _define_loss(self):
         """Loss function that will be used to optimize model parameters"""
