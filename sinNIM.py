@@ -196,18 +196,23 @@ class SInetNIM( NetworkNIM ):
         return target
     # END SInetNIM.make_copy
 
-    def create_NIM_copy( self, num_subunits=None, ei_layers=None, reg_list=None, init_type=None,
-                         tf_seed=None, additional_params=None ):
+    def create_NIM_copy( self, init_type=None, tf_seed=None, other_network_params = None ):
 
-        target = SInetNIM( self.network_params, self.num_examples,
+        if other_network_params is not None:
+            FFparams = other_network_params
+        else:
+            FFparams = self.network_params
+
+        target = SInetNIM( FFparams, self.num_examples,
                            noise_dist=self.noise_dist,
                            learning_alg=self.learning_alg,
                            learning_rate=self.learning_rate,
                            use_batches=self.use_batches,
                            tf_seed=tf_seed,
                            use_gpu=self.use_gpu )
+        # copy weights and stuff
         return target
-    # END NetworkNIM.create_new_NIM
+    # END SInetNIM.create_new_NIM
 
 
 class siFFNetwork( FFNetwork ):
@@ -607,18 +612,15 @@ class max_layer(Layer):
             shaped_weights = tf.reshape(
                 tf.maximum(0.0, self.weights_var), [num_shifts, num_input_filts, 1, self.num_filters])
         else:
-            shaped_weights = tf.reshape( self.weights_var, [num_shifts,num_input_filts,1,self.num_filters] )
+            shaped_weights = tf.reshape( self.weights_var, [num_shifts, num_input_filts, 1, self.num_filters] )
 
         #print(shaped_weights)
         #print(shaped_input)
-        test = tf.matmul( shaped_input, shaped_weights )
-        print('test', test)
+        #test = tf.matmul( shaped_input, shaped_weights )
+        #print('test', test)
 
         pre_max_over_shifts = tf.reduce_max( tf.matmul(shaped_input,shaped_weights), axis=0 )
-        print(pre_max_over_shifts)
         pre_sum_over_filters = tf.reduce_sum( pre_max_over_shifts, axis=0 )
-        print(pre_sum_over_filters)
-        #pre = tf.add( tf.reduce_sum(pre_max_over_shifts), self.biases_var )
         pre = tf.add( pre_sum_over_filters, self.biases_var)
 
         if self.ei_mask_var is not None:
@@ -632,15 +634,3 @@ class max_layer(Layer):
             tf.summary.histogram('act_pre', pre)
             tf.summary.histogram('act_post', post)
         # END maxLayer._define_network
-
-            #dim_order=[0,1,2]
-        #conv_filter_dims = [filter_size[dim_order[0]], filter_size[dim_order[1]],
-        #                    filter_size[dim_order[2]], self.num_filters ]
-
-        # Note: its not clear if -1 should go at beginning or end (see above). If at end, needs to be
-        # permuted to the beginning before being used.
-        #input_dims = [self.input_dims[dim_order[0]], self.input_dims[dim_order[1]],
-        #              self.input_dims[dim_order[2]], -1]
-        #ws_conv = tf.transpose( tf.reshape(self.weights_var, conv_filter_dims), perm = [2,1,0,3] )
-
-        #shaped_input = tf.transpose(tf.reshape(inputs, input_dims), perm=[3, 2, 1, 0])

@@ -65,7 +65,6 @@ class NetworkNIM(Network):
             self,
             network_params,
             num_examples,
-            reg_list = None,
             noise_dist='poisson',
             learning_alg='lbfgs',
             learning_rate=1e-3,
@@ -81,13 +80,9 @@ class NetworkNIM(Network):
                 -> activation_funcs (list of strings)
                 -> pos_constraints (list of Booleans)
             num_examples (int): total number of examples in training data
-            reg_list (dictionary for regularization-class)
             noise_dist (str, optional): noise distribution used by network
                 ['gaussian'] | 'poisson' | 'bernoulli'
-            init_type (str or list of strs, optional): initialization
-                used for network weights; replicated if a single element.
-                ['trunc_normal'] | 'normal' | 'zeros' | 'xavier'
-            learning_alg (str, optional): algorithm used for learning 
+            learning_alg (str, optional): algorithm used for learning
                 parameters. 
                 ['lbfgs'] | 'adam'
             learning_rate (float, optional): learning rate used by the 
@@ -144,10 +139,10 @@ class NetworkNIM(Network):
         self.use_batches = use_batches
         self.network_params = network_params  # kindof redundant, but currently not a better way...
 
-        self._build_graph( use_gpu, tf_seed, network_params, reg_list )
+        self._build_graph( use_gpu, tf_seed, network_params )
     # END networkNIM.__init__
 
-    def _build_graph(self, use_gpu, tf_seed, network_params, reg_list ):
+    def _build_graph(self, use_gpu, tf_seed, network_params ):
 
         # for saving and restoring models
         self.graph = tf.Graph()  # must be initialized before graph creation
@@ -206,7 +201,7 @@ class NetworkNIM(Network):
             with tf.name_scope('gaussian_loss'):
                 # should variable 'cost' be defined here too?
                 cost = tf.nn.l2_loss(data_out - pred)
-                self.unit_cost = tf.reduce_mean(tf.square(data_out-pred),axis=0)
+                self.unit_cost = tf.reduce_mean(tf.square(data_out-pred), axis=0)
                 #cost = tf.reduce_sum(self.unit_cost) # make two separate calculations
                 self.cost = cost
         elif self.noise_dist == 'poisson':
@@ -360,11 +355,13 @@ class NetworkNIM(Network):
             return LL_neuron
     # END get_LL_neuron
 
-    def generate_prediction(self,input_data, data_indxs=None):
+    def generate_prediction(self, input_data, data_indxs=None, layer=-1 ):
 
         # check input
         if input_data.shape[0] != self.num_examples:
             raise ValueError('Input/output data dims must match model values')
+        if layer >= 0:
+            assert layer < len(self.network.layers), 'This layer does not exist.'
 
         if data_indxs is None:
             data_indxs = np.arange(self.num_examples)
@@ -375,7 +372,7 @@ class NetworkNIM(Network):
         with tf.Session(graph=self.graph, config=self.sess_config) as sess:
 
             self._restore_params(sess, input_data, output_data)
-            pred = sess.run(self.network.layers[-1].outputs, feed_dict={self.indices: data_indxs})
+            pred = sess.run(self.network.layers[layer].outputs, feed_dict={self.indices: data_indxs})
 
             return pred
     # END NetworkNIM.generate_prediction
@@ -404,7 +401,7 @@ class NetworkNIM(Network):
     # END get_reg_pen
 
 
-    def copy_model( self, target = None,
+    def copy_model( self, other_network_params = None, target = None,
                     layers_to_transfer = None,
                     target_layers = None,
                     additional_params = None,
@@ -429,12 +426,9 @@ class NetworkNIM(Network):
                     reg_list[reg_type][nn] = self.network.layers[nn].reg.vals[reg_type]
 
             # Make new target
-            target = self.create_NIM_copy( num_subunits = num_subunits,
-                                           ei_layers=ei_layers,
-                                           reg_list=reg_list,
-                                           init_type=init_type,
-                                           tf_seed=tf_seed,
-                                           additional_params = additional_params )
+            target = self.create_NIM_copy( init_type=init_type,
+                                           seed = tf_seed,
+                                           other_network_params = other_network_params )
             # the rest of the properties will be copied directly, which includes ei_layer stuff, act_funcs
 
 
@@ -489,22 +483,18 @@ class NetworkNIM(Network):
         return target
     # END make_copy
 
-    def create_NIM_copy( self, num_subunits, ei_layers, reg_list, init_type,
-                        tf_seed, additional_params=None ):
+    def create_NIM_copy( self, init_type, seed, other_network_params=None ):
 
-        target = NetworkNIM(self.stim_dims, self.num_examples,
-                            num_neurons=self.output_size,
-                            num_subunits=num_subunits,
-                            act_funcs=self.activation_functions,
-                            ei_layers=ei_layers,
-                            noise_dist=self.noise_dist,
-                            reg_list=reg_list,
-                            init_type=init_type,
-                            learning_alg=self.learning_alg,
-                            learning_rate=self.learning_rate,
-                            use_batches=self.use_batches,
-                            tf_seed=tf_seed,
-                            use_gpu=self.use_gpu )
+        if other_network_params is not None:
+            network_params = other_network_params
+        else:
+            network_params = self.network_params
 
-        return target
+        target = NetworkNIM( network_params, self.num_examples,
+                             noise_dist = self.noise_dist,
+                             learning_alg = self.learning_alg,
+                             learning_rate = self.learning_rate,
+                             use_batches = self.use_batches,
+                             tf_seed = seed,
+                             use_gpu = self.use_gpu )
     # END NetworkNIM.create_new_NIM
