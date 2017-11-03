@@ -404,7 +404,6 @@ class NetworkNIM(Network):
     def copy_model( self, other_network_params = None, target = None,
                     layers_to_transfer = None,
                     target_layers = None,
-                    additional_params = None,
                     init_type='trunc_normal', tf_seed=0 ):
 
         num_layers = len(self.network.layers)

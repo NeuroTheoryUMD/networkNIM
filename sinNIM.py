@@ -156,11 +156,10 @@ class SInetNIM( NetworkNIM ):
                                     params_dict = network_params )
     # END SInetNIM._define_network
 
-    def copy_model( self, target=None,
-                    layers_to_transfer=None,
-                    target_layers=None,
-                    additional_params=None,
-                    init_type='trunc_normal',tf_seed=0):
+    def copy_model(self, other_network_params=None, target=None,
+                   layers_to_transfer=None,
+                   target_layers=None,
+                   init_type='trunc_normal', tf_seed=0):
 
         # Figure out first-filter size
         filter_width = self.network.layers[0].weights.shape[0]/self.stim_dims[0]
@@ -188,7 +187,6 @@ class SInetNIM( NetworkNIM ):
             target = target,
             layers_to_transfer = layers_to_transfer,
             target_layers = target_layers,
-            additional_params = additional_params,
             init_type=init_type, tf_seed=tf_seed )
         # the rest of the properties will be copied directly, which includes ei_layer stuff, act_funcs
         return target
@@ -437,7 +435,8 @@ class siLayer(Layer):
         super(siLayer, self).__init__(
                 scope=scope,
                 inputs=inputs,
-                input_dims = filter_size,   # Note difference from layer
+                input_dims = input_dims,
+                filter_dims = filter_size,
                 output_dims = num_filters,   # Note difference from layer
                 activation_func=activation_func,
                 weights_initializer=weights_initializer,
@@ -448,7 +447,7 @@ class siLayer(Layer):
                 log_activations=log_activations,
                 additional_params_dict=siLayer_params )
 
-        # calculate number of shifts in convolution
+        self.input_dims = input_dims
         self.num_filters = num_filters
         self.output_dims = [num_filters] + num_shifts  # note this is implicitly multi-dimensional
         #print('conv LAYER output: ',self.num_outputs)
@@ -466,6 +465,7 @@ class siLayer(Layer):
 
         # Reshape of inputs (4-D):
         input_dims = [self.input_dims[2], self.input_dims[1], self.input_dims[0], -1]
+
         # this is reverse-order from Matlab: [space-2, space-1, lags, and num_examples]
         shaped_input = tf.transpose(tf.reshape(inputs, input_dims), perm=[3, 0, 1, 2])
         # but needed to put time as first dimension
@@ -627,7 +627,7 @@ class max_layer(Layer):
             post = self.activation_func(pre)
 
         self.outputs = post
-        print(post)
+
         if self.log:
             tf.summary.histogram('act_pre', pre)
             tf.summary.histogram('act_post', post)
