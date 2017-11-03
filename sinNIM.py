@@ -61,7 +61,6 @@ class SInetNIM( NetworkNIM ):
     def __init__( self,
                   network_params,
                   num_examples,
-                  reg_list = None,
                   noise_dist='poisson',
                   learning_alg='lbfgs',
                   learning_rate=1e-3,
@@ -137,7 +136,6 @@ class SInetNIM( NetworkNIM ):
         super(SInetNIM, self).__init__(
             network_params, num_examples,
             noise_dist = noise_dist,
-            reg_list = reg_list,
             learning_alg= learning_alg,
             learning_rate = learning_rate,
             use_batches = use_batches,
