@@ -67,6 +67,7 @@ class SInetNIM( NetworkNIM ):
                   use_batches=False,
                   tf_seed=0,
                   use_gpu=None ):
+
         """Constructor for SInetNIM class: identical to NetworkNIM class other than
             building a slightly different graph (otherwise transparent_
 
@@ -277,7 +278,7 @@ class siFFNetwork( FFNetwork ):
                          reg_initializer = network_params['reg_initializers'][nn],
                          num_inh = network_params['num_inh'][nn],
                          pos_constraint = network_params['pos_constraints'][nn],
-                         log_activations = network_params['log_activations'] ))
+                         log_activations = network_params['log_activations'] ) )
 
             # num_inputs to next layer is adjusted by number of shifts, so recalculate
             inputs = self.layers[-1].outputs
@@ -464,11 +465,13 @@ class siLayer(Layer):
         num_shifts = params_dict['num_shifts']
 
         # Reshape of inputs (4-D):
-        input_dims = [self.input_dims[2], self.input_dims[1], self.input_dims[0], -1]
+        #input_dims = [self.input_dims[2], self.input_dims[1], self.input_dims[0], -1]
+        input_dims = [-1, self.input_dims[2], self.input_dims[1], self.input_dims[0]]
 
         # this is reverse-order from Matlab: [space-2, space-1, lags, and num_examples]
-        shaped_input = tf.transpose(tf.reshape(inputs, input_dims), perm=[3, 0, 1, 2])
+        #shaped_input = tf.transpose(tf.reshape(inputs, input_dims), perm=[3, 0, 1, 2])
         # but needed to put time as first dimension
+        shaped_input = tf.reshape(inputs, input_dims)
 
         # Reshape weights (4:D:
         conv_filter_dims = [filter_size[2], filter_size[1], filter_size[0], self.num_filters ]
