@@ -501,9 +501,9 @@ class siLayer(Layer):
             post = tf.add(self.activation_func(pre), self.biases_var)
 
         # One that works: self.outputs = tf.reshape( tf.transpose(post), [-1, self.num_outputs*params_dict['num_shifts']] )
-        x = tf.reshape(post,[self.num_filters *num_shifts[0]*num_shifts[1],-1])
-        #print('x: ', x)
-        self.outputs = tf.reshape( x, [-1, self.num_filters*num_shifts[0]*num_shifts[1]] )
+        # Previous1: x = tf.reshape(post,[self.num_filters *num_shifts[0]*num_shifts[1],-1])
+        # Previous2: self.outputs = tf.reshape( x, [-1, self.num_filters*num_shifts[0]*num_shifts[1]] )
+        self.outputs = tf.reshape(post, [-1, self.num_filters * num_shifts[0] * num_shifts[1]])
 
         if self.log:
             tf.summary.histogram('act_pre', pre)
