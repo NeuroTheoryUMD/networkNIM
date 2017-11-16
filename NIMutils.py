@@ -1,5 +1,5 @@
+from __future__ import division
 import numpy as np
-
 
 def FFnetwork_params( stim_dims = None,
                       num_neurons = None,
@@ -212,8 +212,7 @@ def create_time_embedding(stim, pdims, up_fac=1, tent_spacing=1):
     # If using tent-basis representation
     if tent_spacing > 1:
         # Create a tent-basis (triangle) filter
-        tent_filter = np.append( np.arange(1,tent_spacing)/tent_spacing, 1-np.arange(tent_spacing)/tent_spacing) 
-        print(tent_filter)
+        tent_filter = np.append( np.arange(1,tent_spacing)/tent_spacing, 1-np.arange(tent_spacing)/tent_spacing) / tent_spacing
         # Apply to the stimulus
         filtered_stim = np.zeros(sz)
         for ii in range(len(tent_filter)):
