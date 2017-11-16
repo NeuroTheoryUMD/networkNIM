@@ -126,10 +126,12 @@ def shift_mat_zpad( x, shift, dim=0 ):
 
     assert x.ndim < 3, 'only works in 2 dims or less at the moment.'
     if x.ndim == 1:
+        oneDarray = True
         xcopy = np.zeros([len(x), 1])
         xcopy[:, 0] = x
     else:
         xcopy = x.copy()
+        oneDarray = False
     sz = list(np.shape(xcopy))
 
     if sz[0] == 1:
@@ -158,7 +160,8 @@ def shift_mat_zpad( x, shift, dim=0 ):
     if (dim == 0 and abs(shift) > sz[0]) or (dim == 1 and abs(shift) > sz[1]):
         xshifted = np.zeros(sz)
 
-    if sz[1] == 1:
+    # Make into single-dimension if it started that way
+    if oneDarray:
         xshifted = xshifted[:,0]
 
     return xshifted
@@ -206,13 +209,11 @@ def create_time_embedding(stim, pdims, up_fac=1, tent_spacing=1):
         modstim = np.repeat(modstim, up_fac, 0)  # Repeats the stimulus along the time dimension
         sz = list(np.shape(stim))  # Since we have a new value for time dimension
 
+    # If using tent-basis representation
     if tent_spacing > 1:
         # Create a tent-basis (triangle) filter
-        a = np.arange(1, tent_spacing+1) / (tent_spacing ** 2)  # Create a temporary array
-        b = a[:-1]  # Remove the last element
-        b = b[::-1]  # Reverse the order
-        tent_filter = np.concatenate((a, b), axis=0)  # Make the filter
-
+        tent_filter = np.append( np.arange(1,tent_spacing)/tent_spacing, 1-np.arange(tent_spacing)/tent_spacing) 
+        print(tent_filter)
         # Apply to the stimulus
         filtered_stim = np.zeros(sz)
         for ii in range(len(tent_filter)):
