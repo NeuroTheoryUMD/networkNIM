@@ -465,12 +465,8 @@ class siLayer(Layer):
         num_shifts = params_dict['num_shifts']
 
         # Reshape of inputs (4-D):
-        #input_dims = [self.input_dims[2], self.input_dims[1], self.input_dims[0], -1]
         input_dims = [-1, self.input_dims[2], self.input_dims[1], self.input_dims[0]]
-
         # this is reverse-order from Matlab: [space-2, space-1, lags, and num_examples]
-        #shaped_input = tf.transpose(tf.reshape(inputs, input_dims), perm=[3, 0, 1, 2])
-        # but needed to put time as first dimension
         shaped_input = tf.reshape(inputs, input_dims)
 
         # Reshape weights (4:D:
@@ -500,9 +496,6 @@ class siLayer(Layer):
         else:
             post = tf.add(self.activation_func(pre), self.biases_var)
 
-        # One that works: self.outputs = tf.reshape( tf.transpose(post), [-1, self.num_outputs*params_dict['num_shifts']] )
-        # Previous1: x = tf.reshape(post,[self.num_filters *num_shifts[0]*num_shifts[1],-1])
-        # Previous2: self.outputs = tf.reshape( x, [-1, self.num_filters*num_shifts[0]*num_shifts[1]] )
         self.outputs = tf.reshape(post, [-1, self.num_filters * num_shifts[0] * num_shifts[1]])
 
         if self.log:

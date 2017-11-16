@@ -124,7 +124,13 @@ def shift_mat_zpad( x, shift, dim=0 ):
     # Takes a vector or matrix and shifts it along dimension dim by amount shift using zero-padding.
     # Positive shifts move the matrix right or down
 
-    sz = list(np.shape(x))
+    assert x.ndim < 3, 'only works in 2 dims or less at the moment.'
+    if x.ndim == 1:
+        xcopy = np.zeros([len(x), 1])
+        xcopy[:, 0] = x
+    else:
+        xcopy = x.copy()
+    sz = list(np.shape(xcopy))
 
     if sz[0] == 1:
         dim = 1
@@ -132,31 +138,34 @@ def shift_mat_zpad( x, shift, dim=0 ):
     if dim == 0:
         if shift >= 0:
             a = np.zeros((shift, sz[1]))
-            b = x[0:sz[0]-shift, :]
+            b = xcopy[0:sz[0]-shift, :]
             xshifted = np.concatenate((a, b), axis=dim)
         else:
             a = np.zeros((-shift, sz[1]))
-            b = x[-shift:, :]
+            b = xcopy[-shift:, :]
             xshifted = np.concatenate((b, a), axis=dim)
     elif dim == 1:
         if shift >= 0:
             a = np.zeros((sz[0], shift))
-            b = x[:, 0:sz[1]-shift]
+            b = xcopy[:, 0:sz[1]-shift]
             xshifted = np.concatenate((a, b), axis=dim)
         else:
             a = np.zeros((sz[0], -shift))
-            b = x[:, -shift:]
+            b = xcopy[:, -shift:]
             xshifted = np.concatenate((b, a), axis=dim)
 
     # If the shift in one direction is bigger than the size of the stimulus in that direction return a zero matrix
     if (dim == 0 and abs(shift) > sz[0]) or (dim == 1 and abs(shift) > sz[1]):
         xshifted = np.zeros(sz)
 
+    if sz[1] == 1:
+        xshifted = xshifted[:,0]
+
     return xshifted
 # END shit_mat_zpad
 
 
-def create_time_embedding(stim, pdims, pup_fac, ptent_spacing):
+def create_time_embedding(stim, pdims, up_fac=1, tent_spacing=1):
     """
     # All the arguments starting with a p are part of params structure which I will fix later
     # Takes a Txd stimulus matrix and creates a time-embedded matrix of size Tx(d*L), where L is the desired
@@ -191,37 +200,38 @@ def create_time_embedding(stim, pdims, pup_fac, ptent_spacing):
         print 'Stimulus dimension mismatch'
         raise ValueError
 
+    modstim = stim.copy()
     # Up-sample stimulus if required
-    if pup_fac > 1:
-        stim = np.repeat(stim, pup_fac, 0)  # Repeats the stimulus along the time dimension
+    if up_fac > 1:
+        modstim = np.repeat(modstim, up_fac, 0)  # Repeats the stimulus along the time dimension
         sz = list(np.shape(stim))  # Since we have a new value for time dimension
 
-    # If using a tent-basis representation (if ~isempty...)
-    # Create a tent-basis (triangle) filter
-    a = np.arange(1, ptent_spacing + 1) / (ptent_spacing ** 2)  # Create a temporary array
-    b = a[:-1]  # Remove the last element
-    b = b[::-1]  # Reverse the order
-    tent_filter = np.concatenate((a, b), axis=0)  # Make the filter
+    if tent_spacing > 1:
+        # Create a tent-basis (triangle) filter
+        a = np.arange(1, tent_spacing+1) / (tent_spacing ** 2)  # Create a temporary array
+        b = a[:-1]  # Remove the last element
+        b = b[::-1]  # Reverse the order
+        tent_filter = np.concatenate((a, b), axis=0)  # Make the filter
 
-    # Apply to the stimulus
-    filtered_stim = np.zeros(sz)
-    for ii in range(len(tent_filter)):
-        filtered_stim = filtered_stim + shift_mat_zpad(stim, ii - ptent_spacing + 1, 0) * tent_filter[ii]
+        # Apply to the stimulus
+        filtered_stim = np.zeros(sz)
+        for ii in range(len(tent_filter)):
+            filtered_stim = filtered_stim + shift_mat_zpad(modstim, ii-tent_spacing+1, 0) * tent_filter[ii]
+        modstim = filtered_stim
 
-    stim = filtered_stim
-    sz = list(np.shape(stim))
-    lag_spacing = ptent_spacing  # If ptent_spacing is not given in input then manually put lag_spacing = 1
-
+    sz = list(np.shape(modstim))
+    lag_spacing = tent_spacing  # If ptent_spacing is not given in input then manually put lag_spacing = 1
     # For temporal-only stimuli (this method can be faster if you're not using tent-basis rep)
     # For myself, add: & tent_spacing is empty (= & isempty...).  Since isempty(tent_spa...) is equivalent to
     # its value being 1 I added this condition to the if below temporarily:
-    if sz[1] == 1 and ptent_spacing == 1:
+    if sz[1] == 1 and tent_spacing == 1:
         xmat = toeplitz(np.reshape(stim, (1, sz[0])), np.concatenate((stim[0], np.zeros(pdims[0] - 1)), axis=0))
     else:  # Otherwise loop over lags and manually shift the stim matrix
         xmat = np.zeros((sz[0], np.prod(pdims)))
-        for ii in range(pdims[0]):
-            for jj in range(0, pdims[0] * sz[1], pdims[0]):
-                xmat[:, ii + jj] = shift_mat_zpad(stim, lag_spacing * ii, 0)[:, jj]
+        for lag in range(pdims[0]):
+            for xx in range(0, sz[1]):
+                xmat[:, xx*pdims[0]+lag] = shift_mat_zpad(modstim[:, xx], lag_spacing*lag, 0)
 
     return xmat
 # END create_time_embedding
+
