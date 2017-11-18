@@ -128,6 +128,7 @@ class NetworkNIM(Network):
 
 
         # set model attributes from input
+        self.network_params = network_params  # kindof redundant, but currently not a better way...
         self.stim_dims = stim_dims
         self.output_size = network_params['layer_sizes'][-1]
         self.num_layers = len(network_params['layer_sizes'])-1
@@ -137,7 +138,6 @@ class NetworkNIM(Network):
         self.learning_rate = learning_rate
         self.num_examples = num_examples
         self.use_batches = use_batches
-        self.network_params = network_params  # kindof redundant, but currently not a better way...
 
         self._build_graph( use_gpu, tf_seed, network_params )
     # END networkNIM.__init__
@@ -401,35 +401,16 @@ class NetworkNIM(Network):
     # END get_reg_pen
 
 
-    def copy_model( self, other_network_params = None, target = None,
+    def copy_model( self, alternate_network_params = None, target = None,
                     layers_to_transfer = None,
                     target_layers = None,
                     init_type='trunc_normal', tf_seed=0 ):
 
         num_layers = len(self.network.layers)
         if target is None:
-            # Re-derive subunit layers and ei-masks
-            num_subunits = [0]*(num_layers-1)
-            ei_layers = [-1]*(num_layers-1)
-            for nn in range(len(num_subunits)):
-                num_subunits[nn] = self.network.layers[nn].num_filters
-                if self.network.layers[nn+1].pos_constraint:
-                    ei_layers[nn] = 0  # will copy ei_mask later
-
-            # Accumulate regularization list from layers
-            reg_list = {}
-            for reg_type, reg_vals in self.network.layers[0].reg.vals.iteritems():
-                reg_list[reg_type] = [None]*num_layers
-            for nn in range(num_layers):
-                for reg_type, reg_vals in self.network.layers[nn].reg.vals.iteritems():
-                    reg_list[reg_type][nn] = self.network.layers[nn].reg.vals[reg_type]
-
             # Make new target
-            target = self.create_NIM_copy( init_type=init_type,
-                                           seed = tf_seed,
-                                           other_network_params = other_network_params )
-            # the rest of the properties will be copied directly, which includes ei_layer stuff, act_funcs
-
+            target = self.create_NIM_copy( init_type=init_type, tf_seed=tf_seed,
+                                           alternate_network_params=alternate_network_params )
 
         # Figure out mapping from self.layers to target.layers
         num_layers_target = len(target.network.layers)
@@ -482,10 +463,10 @@ class NetworkNIM(Network):
         return target
     # END make_copy
 
-    def create_NIM_copy( self, init_type, seed, other_network_params=None ):
+    def create_NIM_copy( self, init_type=None, tf_seed=None, alternate_network_params=None ):
 
-        if other_network_params is not None:
-            network_params = other_network_params
+        if alternate_network_params is not None:
+            network_params = alternate_network_params
         else:
             network_params = self.network_params
 
@@ -494,6 +475,7 @@ class NetworkNIM(Network):
                              learning_alg = self.learning_alg,
                              learning_rate = self.learning_rate,
                              use_batches = self.use_batches,
-                             tf_seed = seed,
+                             tf_seed = tf_seed,
                              use_gpu = self.use_gpu )
+        return target
     # END NetworkNIM.create_new_NIM

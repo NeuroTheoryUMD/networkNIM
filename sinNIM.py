@@ -79,6 +79,7 @@ class SInetNIM( NetworkNIM ):
                 -> pos_constraints (list of Booleans)
                 -> reg_list (dictionary for regularization-class)
                 -> num_conv_layers
+                -> conv_filter_widths
                 -> max_layer
                 -> shift_spacing
                 -> binocular
@@ -125,13 +126,13 @@ class SInetNIM( NetworkNIM ):
             stim_dims = [1,stim_dims,1]
 
         # Work out filter size (from filter_widths and num lags)
-        if network_params['first_filter_width'] is None:
-            first_filter_size = stim_dims
-        else:
-            first_filter_size = [stim_dims[0],network_params['first_filter_width'],1]  # assumes 1-d filter here
-            if stim_dims[2] > 1:
-                first_filter_size[2] = network_params['first_filter_width']  # then 2-d filter
-        network_params['first_filter_size'] = first_filter_size
+        #if network_params['conv_filter_widths'] is None:
+        #    first_filter_size = stim_dims
+        #else:
+        #    first_filter_size = [stim_dims[0],network_params['first_filter_width'],1]  # assumes 1-d filter here
+        #    if stim_dims[2] > 1:
+        #        first_filter_size[2] = network_params['first_filter_width']  # then 2-d filter
+        #network_params['first_filter_size'] = first_filter_size
 
         # call __init__() method of super-super class
         super(SInetNIM, self).__init__(
@@ -157,46 +158,25 @@ class SInetNIM( NetworkNIM ):
                                     params_dict = network_params )
     # END SInetNIM._define_network
 
-    def copy_model(self, other_network_params=None, target=None,
+    def copy_model(self, alternative_network_params=None, target=None,
                    layers_to_transfer=None,
                    target_layers=None,
                    init_type='trunc_normal', tf_seed=0):
 
-        # Figure out first-filter size
-        filter_width = self.network.layers[0].weights.shape[0]/self.stim_dims[0]
-
-        # Figure out shift_spacing
-        num_shifts = self.network.layers[0].num_outputs / self.network.layers[0].weights.shape[1]
-        Nspace = self.stim_dims[1]*self.stim_dims[2]
-        shift_spacing = Nspace/num_shifts
-
-        # Adjust if doing 2-dimensions in space
-        if (self.stim_dims[1]>1) and ((self.stim_dims[2]>1)):
-            shift_spacing = np.sqrt(Nspace/num_shifts)
-            if filter_width == Nspace:
-                filter_width = [self.stim_dims[2],self.stim_dims[1]]  # if default to stim dimensions
-            else:
-                filter_width = np.sqrt(filter_width) # if entered lower filter width, it will be a square
-
-        # Also might need to modify outputs of first layer
-
-        additional_params = {'first_filter_size': int(filter_width),
-                             'binocular': self.binocular,
-                             'shift_spacing': int(shift_spacing) }
-
         target = super(SInetNIM, self).copy_model(
-            target = target,
+            alternate_network_params = alternative_network_params, target = target,
             layers_to_transfer = layers_to_transfer,
             target_layers = target_layers,
             init_type=init_type, tf_seed=tf_seed )
         # the rest of the properties will be copied directly, which includes ei_layer stuff, act_funcs
+
         return target
     # END SInetNIM.make_copy
 
-    def create_NIM_copy( self, init_type=None, tf_seed=None, other_network_params = None ):
+    def create_NIM_copy( self, init_type=None, tf_seed=None, alternate_network_params = None ):
 
-        if other_network_params is not None:
-            FFparams = other_network_params
+        if alternate_network_params is not None:
+            FFparams = alternate_network_params
         else:
             FFparams = self.network_params
 
@@ -257,17 +237,24 @@ class siFFNetwork( FFNetwork ):
         # Pull out useful params from network_params
         layer_sizes = network_params['layer_sizes']
         # Additional si-specific params
-        first_filter_size = network_params['first_filter_size']
+        conv_filter_widths = network_params['conv_filter_widths']
         shift_spacing = network_params['shift_spacing']
         binocular = network_params['binocular']
 
         self.layers = []
         num_conv_layers = network_params['num_conv_layers']
         for nn in range(num_conv_layers):
+            if conv_filter_widths[nn] is None:
+                conv_filter_size = layer_sizes[nn]
+            else:
+                conv_filter_size = [layer_sizes[nn][0],conv_filter_widths[nn],1]
+                if layer_sizes[nn][2] > 1:
+                    conv_filter_size[2] = conv_filter_widths[nn]
+            print(conv_filter_size)
             self.layers.append(
                 siLayer( scope = 'conv_layer_%i' % nn,
                          inputs = inputs,
-                         filter_size = first_filter_size,
+                         filter_dims = conv_filter_size,
                          shift_spacing = shift_spacing,
                          binocular = binocular,
                          input_dims = layer_sizes[nn],
@@ -355,7 +342,7 @@ class siLayer(Layer):
             inputs=None,
             input_dims=None, # this can be a list up to 3-dimensions
             num_filters=None,
-            filter_size=None, # this can be a list up to 3-dimensions
+            filter_dims=None, # this can be a list up to 3-dimensions
             shift_spacing=1,
             binocular=False,
             activation_func='relu',
@@ -407,16 +394,16 @@ class siLayer(Layer):
         else:
             input_dims = [1,input_dims,1]  # assume 1-dimensional (space)
 
-        if filter_size is None:
-            filter_size = input_dims
+        if filter_dims is None:
+            filter_dims = input_dims
             if binocular is True:
-                filter_size[1] = filter_size[1] / 2
+                filter_dims[1] = filter_dims[1] / 2
         else:
-            if isinstance(filter_size,list):
-                while len(filter_size) < 3:
-                    filter_size.extend(1)
+            if isinstance(filter_dims,list):
+                while len(filter_dims) < 3:
+                    filter_dims.extend(1)
             else:
-                filter_size = [filter_size,1,1]
+                filter_dims = [filter_dims,1,1]
 
         # If output dimensions already established, just strip out num_filters
         if isinstance( num_filters, list):
@@ -431,13 +418,13 @@ class siLayer(Layer):
 
         # Set up additional params_dict for siLayer
         siLayer_params = {'binocular': binocular, 'shift_spacing': shift_spacing,
-                          'num_shifts': num_shifts, 'filter_size': filter_size}
+                          'num_shifts': num_shifts, 'filter_dims': filter_dims}
 
         super(siLayer, self).__init__(
                 scope=scope,
                 inputs=inputs,
                 input_dims = input_dims,
-                filter_dims = filter_size,
+                filter_dims = filter_dims,
                 output_dims = num_filters,   # Note difference from layer
                 activation_func=activation_func,
                 weights_initializer=weights_initializer,
@@ -461,7 +448,7 @@ class siLayer(Layer):
         # Unfold siLayer-specific parameters for building graph
         binocular = params_dict['binocular']
         shift_spacing = params_dict['shift_spacing']
-        filter_size = params_dict['filter_size']
+        filter_size = params_dict['filter_dims']
         num_shifts = params_dict['num_shifts']
 
         # Reshape of inputs (4-D):

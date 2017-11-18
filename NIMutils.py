@@ -12,7 +12,7 @@ def FFnetwork_params( stim_dims = None,
                       verbose = True,
                       num_conv_layers = 0, # the below are for convolutional network (SIN-NIM)
                       max_layer = True,
-                      first_filter_width = None,
+                      conv_filter_widths = None,
                       shift_spacing = 1,
                       binocular = False ):
     """This generates the information for the network_params dictionary that is passed into
@@ -98,7 +98,13 @@ def FFnetwork_params( stim_dims = None,
     if num_conv_layers > 0:
         network_params['num_conv_layers'] = num_conv_layers
         network_params['max_layer'] = max_layer
-        network_params['first_filter_width'] = first_filter_width
+
+        if not isinstance(conv_filter_widths,list):
+            conv_filter_widths = [conv_filter_widths]
+        while len(conv_filter_widths) < num_conv_layers:
+            conv_filter_widths.append(None)
+        network_params['conv_filter_widths'] = conv_filter_widths
+
         network_params['shift_spacing'] = shift_spacing
         network_params['binocular'] = binocular
 
@@ -109,6 +115,8 @@ def FFnetwork_params( stim_dims = None,
             s += '/I' + str(num_inh_layers[nn]) + ']'
             if pos_constraints[nn]:
                 s += ' +'
+            if conv_filter_widths[nn] is not None:
+                s += '  \tfilter width = ' + str(conv_filter_widths[nn])
             print(s)
         for nn in range(num_conv_layers,num_layers):
             s = 'Layer ' + str(nn) + ' (' + act_funcs[nn] + '): [E' + str(layer_sizes[nn+1]-num_inh_layers[nn])
