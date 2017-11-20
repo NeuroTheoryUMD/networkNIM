@@ -1,5 +1,6 @@
 from __future__ import division
 import numpy as np
+from scipy.linalg import toeplitz
 
 def FFnetwork_params( stim_dims = None,
                       num_neurons = None,
@@ -215,7 +216,7 @@ def create_time_embedding(stim, pdims, up_fac=1, tent_spacing=1):
     # Up-sample stimulus if required
     if up_fac > 1:
         modstim = np.repeat(modstim, up_fac, 0)  # Repeats the stimulus along the time dimension
-        sz = list(np.shape(stim))  # Since we have a new value for time dimension
+        sz = list(np.shape(modstim))  # Since we have a new value for time dimension
 
     # If using tent-basis representation
     if tent_spacing > 1:
