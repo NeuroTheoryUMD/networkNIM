@@ -234,7 +234,7 @@ def create_time_embedding(stim, pdims, up_fac=1, tent_spacing=1):
     # For myself, add: & tent_spacing is empty (= & isempty...).  Since isempty(tent_spa...) is equivalent to
     # its value being 1 I added this condition to the if below temporarily:
     if sz[1] == 1 and tent_spacing == 1:
-        xmat = toeplitz(np.reshape(stim, (1, sz[0])), np.concatenate((stim[0], np.zeros(pdims[0] - 1)), axis=0))
+        xmat = toeplitz(np.reshape(modstim, (1, sz[0])), np.concatenate((stim[0], np.zeros(pdims[0] - 1)), axis=0))
     else:  # Otherwise loop over lags and manually shift the stim matrix
         xmat = np.zeros((sz[0], np.prod(pdims)))
         for lag in range(pdims[0]):
