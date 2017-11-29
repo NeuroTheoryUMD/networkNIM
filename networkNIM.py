@@ -187,13 +187,13 @@ class NetworkNIM(Network):
     def _define_network( self, network_params ):
 
         self.network = FFNetwork( scope = 'FFNetwork',
-                                  inputs = self.data_in_batch,
+                                  inputs = self.data_in_batch[0],
                                   params_dict = network_params )
 
     def _define_loss(self):
         """Loss function that will be used to optimize model parameters"""
 
-        data_out = self.data_out_batch
+        data_out = self.data_out_batch[0]
         pred = self.network.layers[-1].outputs
 
         # define cost function

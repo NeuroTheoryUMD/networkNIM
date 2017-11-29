@@ -154,7 +154,7 @@ class SInetNIM( NetworkNIM ):
     def _define_network(self, network_params ):
 
         self.network = siFFNetwork( scope = 'siFFnetwork',
-                                    inputs = self.data_in_batch,
+                                    inputs = self.data_in_batch[0],
                                     params_dict = network_params )
     # END SInetNIM._define_network
 
