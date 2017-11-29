@@ -124,13 +124,14 @@ class NetworkNIM(Network):
         else:
             while len(stim_dims) < 3:
                 stim_dims.append(1)
-        self.input_size = stim_dims[0]*stim_dims[1]*stim_dims[2]
+        # make a list out of this
+        self.input_size = [stim_dims[0]*stim_dims[1]*stim_dims[2]]
 
 
         # set model attributes from input
         self.network_params = network_params  # kindof redundant, but currently not a better way...
         self.stim_dims = stim_dims
-        self.output_size = network_params['layer_sizes'][-1]
+        self.output_size = [network_params['layer_sizes'][-1]] # make a list
         self.num_layers = len(network_params['layer_sizes'])-1
         self.activation_functions = network_params['activation_funcs']
         self.noise_dist = noise_dist
