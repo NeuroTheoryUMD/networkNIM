@@ -299,12 +299,6 @@ class NetworkNIM(Network):
         """
 
         # check input
-        if input_data.shape[0] != output_data.shape[0]:
-            raise ValueError('Input and output data must have matching ' +
-                             'number of examples')
-        if input_data.shape[0] != self.num_examples:
-            raise ValueError('Input/output data dims must match model values')
-
         if data_indxs is None:
             data_indxs = np.arange(self.num_examples)
 
@@ -339,12 +333,6 @@ class NetworkNIM(Network):
         """
 
         # check input
-        if input_data.shape[0] != output_data.shape[0]:
-            raise ValueError('Input and output data must have matching ' +
-                             'number of examples')
-        if input_data.shape[0] != self.num_examples:
-            raise ValueError('Input/output data dims must match model values')
-
         if data_indxs is None:
             data_indxs = np.arange(self.num_examples)
 
@@ -359,8 +347,6 @@ class NetworkNIM(Network):
     def generate_prediction(self, input_data, data_indxs=None, layer=-1 ):
 
         # check input
-        if input_data.shape[0] != self.num_examples:
-            raise ValueError('Input/output data dims must match model values')
         if layer >= 0:
             assert layer < len(self.network.layers), 'This layer does not exist.'
 
