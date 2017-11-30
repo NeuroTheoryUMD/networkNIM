@@ -354,7 +354,7 @@ class NetworkNIM(Network):
             data_indxs = np.arange(self.num_examples)
 
         # Generate fake_output data
-        output_data = np.zeros( [len(data_indxs),self.output_size], dtype='float32' )
+        output_data = np.zeros( [self.num_examples,self.output_size[0]], dtype='float32' )
 
         with tf.Session(graph=self.graph, config=self.sess_config) as sess:
 
