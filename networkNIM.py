@@ -64,7 +64,6 @@ class NetworkNIM(Network):
     def __init__(
             self,
             network_params,
-            num_examples,
             noise_dist='poisson',
             learning_alg='lbfgs',
             learning_rate=1e-3,
@@ -110,8 +109,8 @@ class NetworkNIM(Network):
         """
 
         # input checking
-        if num_examples is None:
-            raise ValueError('Must specify number of training examples')
+        #if num_examples is None:
+        #    raise ValueError('Must specify number of training examples')
 
         # call __init__() method of super class
         super(NetworkNIM, self).__init__()
@@ -137,21 +136,36 @@ class NetworkNIM(Network):
         self.noise_dist = noise_dist
         self.learning_alg = learning_alg
         self.learning_rate = learning_rate
-        self.num_examples = num_examples
+        #self.num_examples = num_examples
         self.use_batches = use_batches
+        self.use_gpu = use_gpu
+        self.tf_seed = tf_seed
+        #self._build_graph( tf_seed, network_params )
 
-        self._build_graph( use_gpu, tf_seed, network_params )
+        self._define_network( network_params )
+
+        # set parameters for graph (constructed for each train)
+        self.graph = None
+        self.saver = None
+        self.merge_summaries = None
+        self.init = None
+
     # END networkNIM.__init__
 
-    def _build_graph(self, use_gpu, tf_seed, network_params ):
+    def _define_network( self, network_params ):
+
+        self.network = FFNetwork( scope = 'FFNetwork',
+                                  params_dict = network_params )
+
+
+    def build_graph(self):
 
         # for saving and restoring models
         self.graph = tf.Graph()  # must be initialized before graph creation
 
         # for specifying device
-        if use_gpu is not None:
-            self.use_gpu = use_gpu
-            if use_gpu:
+        if self.use_gpu is not None:
+            if self.use_gpu:
                 self.sess_config = tf.ConfigProto(device_count={'GPU': 1})
             else:
                 self.sess_config = tf.ConfigProto(device_count={'GPU': 0})
@@ -159,21 +173,22 @@ class NetworkNIM(Network):
         # build model graph
         with self.graph.as_default():
 
-            np.random.seed(tf_seed)
-            tf.set_random_seed(tf_seed)
+            np.random.seed(self.tf_seed)
+            tf.set_random_seed(self.tf_seed)
 
             # define pipeline for feeding data into model
             with tf.variable_scope('data'):
                 self._initialize_data_pipeline()
 
-            # initialize weights and create model
-            self._define_network( network_params )
+            # Build network graph
+            self.network.build_graph( self.data_in_batch[0], self.network_params )
+            #self._define_network( self.network_params )
 
-            # define loss function
+            # Define loss function
             with tf.variable_scope('loss'):
                 self._define_loss()
 
-            # define optimization routine
+            # Define optimization routine
             with tf.variable_scope('optimizer'):
                 self._define_optimizer()
 
@@ -184,12 +199,6 @@ class NetworkNIM(Network):
             self.merge_summaries = tf.summary.merge_all()
             # add variable initialization op to graph
             self.init = tf.global_variables_initializer()
-
-    def _define_network( self, network_params ):
-
-        self.network = FFNetwork( scope = 'FFNetwork',
-                                  inputs = self.data_in_batch[0],
-                                  params_dict = network_params )
 
     def _define_loss(self):
         """Loss function that will be used to optimize model parameters"""
@@ -332,6 +341,7 @@ class NetworkNIM(Network):
 
         """
 
+        assert self.graph is not None, 'Must fit model first.'
         # check input
         if data_indxs is None:
             data_indxs = np.arange(self.num_examples)
@@ -346,6 +356,7 @@ class NetworkNIM(Network):
 
     def generate_prediction(self, input_data, data_indxs=None, layer=-1 ):
 
+        assert self.graph is not None, 'Must fit model first.'
         # check input
         if layer >= 0:
             assert layer < len(self.network.layers), 'This layer does not exist.'
@@ -457,7 +468,7 @@ class NetworkNIM(Network):
         else:
             network_params = self.network_params
 
-        target = NetworkNIM( network_params, self.num_examples,
+        target = NetworkNIM( network_params,
                              noise_dist = self.noise_dist,
                              learning_alg = self.learning_alg,
                              learning_rate = self.learning_rate,

@@ -60,7 +60,6 @@ class SInetNIM( NetworkNIM ):
 
     def __init__( self,
                   network_params,
-                  num_examples,
                   noise_dist='poisson',
                   learning_alg='lbfgs',
                   learning_rate=1e-3,
@@ -118,12 +117,12 @@ class SInetNIM( NetworkNIM ):
         assert len(network_params['layer_sizes']) > 2, 'Must have at least one hidden layer for a sinNIM.'
 
         # Make stim_dimensions with default of single dimension correspond to space
-        stim_dims = network_params['layer_sizes'][0]
-        if isinstance(stim_dims, list):
-            while len(stim_dims)<3:
-                stim_dims.append(1)
-        else:
-            stim_dims = [1,stim_dims,1]
+        #stim_dims = network_params['layer_sizes'][0]
+        #if isinstance(stim_dims, list):
+        #    while len(stim_dims)<3:
+        #        stim_dims.append(1)
+        #else:
+        #    stim_dims = [1,stim_dims,1]
 
         # Work out filter size (from filter_widths and num lags)
         #if network_params['conv_filter_widths'] is None:
@@ -136,7 +135,7 @@ class SInetNIM( NetworkNIM ):
 
         # call __init__() method of super-super class
         super(SInetNIM, self).__init__(
-            network_params, num_examples,
+            network_params,
             noise_dist = noise_dist,
             learning_alg= learning_alg,
             learning_rate = learning_rate,
@@ -154,7 +153,6 @@ class SInetNIM( NetworkNIM ):
     def _define_network(self, network_params ):
 
         self.network = siFFNetwork( scope = 'siFFnetwork',
-                                    inputs = self.data_in_batch[0],
                                     params_dict = network_params )
     # END SInetNIM._define_network
 
@@ -180,7 +178,7 @@ class SInetNIM( NetworkNIM ):
         else:
             FFparams = self.network_params
 
-        target = SInetNIM( FFparams, self.num_examples,
+        target = SInetNIM( FFparams,
                            noise_dist=self.noise_dist,
                            learning_alg=self.learning_alg,
                            learning_rate=self.learning_rate,
@@ -228,11 +226,10 @@ class siFFNetwork( FFNetwork ):
 
         super(siFFNetwork, self).__init__(
             scope = scope,
-            inputs = inputs,
             params_dict = params_dict )
     # END siFFnetwork.__init__
 
-    def _define_network( self, inputs, network_params ):
+    def _define_network( self, network_params ):
 
         # Pull out useful params from network_params
         layer_sizes = network_params['layer_sizes']
@@ -253,7 +250,6 @@ class siFFNetwork( FFNetwork ):
             print(conv_filter_size)
             self.layers.append(
                 siLayer( scope = 'conv_layer_%i' % nn,
-                         inputs = inputs,
                          filter_dims = conv_filter_size,
                          shift_spacing = shift_spacing,
                          binocular = binocular,
@@ -268,14 +264,12 @@ class siFFNetwork( FFNetwork ):
                          log_activations = network_params['log_activations'] ) )
 
             # num_inputs to next layer is adjusted by number of shifts, so recalculate
-            inputs = self.layers[-1].outputs
             layer_sizes[nn+1] = self.layers[nn].output_dims
 
         # Insert max layer if desired
         if network_params['max_layer']:
             self.layers.append(
                 max_layer( scope='max_layer',
-                           inputs=inputs,
                            input_dims=layer_sizes[num_conv_layers],
                            output_dims=layer_sizes[num_conv_layers+1],
                            activation_func=network_params['activation_funcs'][num_conv_layers],
@@ -286,13 +280,11 @@ class siFFNetwork( FFNetwork ):
                            pos_constraint=network_params['pos_constraints'][num_conv_layers],
                            log_activations=network_params['log_activations']))
             num_conv_layers = num_conv_layers + 1
-            inputs = self.layers[-1].outputs
 
         # Attach rest of layers -- just like FFNetwork constructor
         for layer in range(num_conv_layers, self.num_layers):
             self.layers.append(
                 Layer( scope = 'layer_%i' % layer,
-                       inputs = inputs,
                        input_dims = layer_sizes[layer],
                        output_dims = layer_sizes[layer + 1],
                        activation_func=network_params['activation_funcs'][layer],
@@ -302,10 +294,8 @@ class siFFNetwork( FFNetwork ):
                        num_inh=network_params['num_inh'][layer],
                        pos_constraint=network_params['pos_constraints'][layer],
                        log_activations=network_params['log_activations']))
-            inputs = self.layers[-1].outputs
 
     # END siFFNetwork._define_network
-
 
 
 class siLayer(Layer):
@@ -339,7 +329,6 @@ class siLayer(Layer):
     def __init__(
             self,
             scope=None,
-            inputs=None,
             input_dims=None, # this can be a list up to 3-dimensions
             num_filters=None,
             filter_dims=None, # this can be a list up to 3-dimensions
@@ -416,13 +405,8 @@ class siLayer(Layer):
         if input_dims[2] > 1:
             num_shifts[1] = int(np.floor(input_dims[2]/shift_spacing))
 
-        # Set up additional params_dict for siLayer
-        siLayer_params = {'binocular': binocular, 'shift_spacing': shift_spacing,
-                          'num_shifts': num_shifts, 'filter_dims': filter_dims}
-
         super(siLayer, self).__init__(
                 scope=scope,
-                inputs=inputs,
                 input_dims = input_dims,
                 filter_dims = filter_dims,
                 output_dims = num_filters,   # Note difference from layer
@@ -432,63 +416,68 @@ class siLayer(Layer):
                 reg_initializer=reg_initializer,
                 num_inh=num_inh,
                 pos_constraint=False,  # Note difference from layer
-                log_activations=log_activations,
-                additional_params_dict=siLayer_params )
+                log_activations=log_activations )
 
-        self.input_dims = input_dims
-        self.num_filters = num_filters
+        # siLayer-specific properties
+        self.num_shifts = num_shifts
+        self.binocular = binocular
+        # Changes in properties from Layer
         self.output_dims = [num_filters] + num_shifts  # note this is implicitly multi-dimensional
-        #print('conv LAYER output: ',self.num_outputs)
 
     # END siLayer.__init__
 
-    def _define_network( self, inputs, params_dict=None ):
-        # push data through layer
+    def build_graph( self, inputs, params_dict=None ):
 
+        assert params_dict is not None, 'Incorrect siLayer initialization.'
         # Unfold siLayer-specific parameters for building graph
-        binocular = params_dict['binocular']
         shift_spacing = params_dict['shift_spacing']
-        filter_size = params_dict['filter_dims']
-        num_shifts = params_dict['num_shifts']
+        binocular = self.binocular
+        filter_size = self.filter_dims
+        num_shifts = self.num_shifts
 
-        # Reshape of inputs (4-D):
-        input_dims = [-1, self.input_dims[2], self.input_dims[1], self.input_dims[0]]
-        # this is reverse-order from Matlab: [space-2, space-1, lags, and num_examples]
-        shaped_input = tf.reshape(inputs, input_dims)
+        with tf.name_scope(self.scope):
+            self._define_layer_variables()
 
-        # Reshape weights (4:D:
-        conv_filter_dims = [filter_size[2], filter_size[1], filter_size[0], self.num_filters ]
-        ws_conv = tf.reshape(self.weights_var, conv_filter_dims)
-        # this is reverse-order from Matlab: [space-2, space-1, lags] and num_filters is explicitly last dim
+            # Computation performed in the layer
+            # Reshape of inputs (4-D):
+            input_dims = [-1, self.input_dims[2], self.input_dims[1], self.input_dims[0]]
+            # this is reverse-order from Matlab: [space-2, space-1, lags, and num_examples]
+            shaped_input = tf.reshape(inputs, input_dims)
 
-        # Make strides list
-        strides = [1,1,1,1]
-        if conv_filter_dims[1]>1:
-            strides[1]=shift_spacing
-        if conv_filter_dims[2] > 1:
-            strides[2] = shift_spacing
+            # Reshape weights (4:D:
+            conv_filter_dims = [filter_size[2], filter_size[1], filter_size[0], self.num_filters ]
+            ws_conv = tf.reshape(self.weights_var, conv_filter_dims)
+            # this is reverse-order from Matlab: [space-2, space-1, lags] and num_filters is explicitly last dim
 
-        if binocular is False:
-            pre = tf.nn.conv2d( shaped_input, ws_conv, strides, padding='SAME' ) #, data_format="NCHW")
-        else:
-            NX = params_dict['input_dims'][1]/2
-            stimL = tf.slice( shaped_input, [0,0,0,0], [-1,NX,-1,-1] )
-            stimR = tf.slice( shaped_input, [0,NX,0,0], [-1,NX,-1,-1] )
-            pre = tf.concat(
-                tf.nn.conv2d(stimL, ws_conv, strides, padding='SAME'),
-                tf.nn.conv2d(stimR, ws_conv, strides, padding='SAME'))
+            # Make strides list
+            strides = [1,1,1,1]
+            if conv_filter_dims[1]>1:
+                strides[1]=shift_spacing
+            if conv_filter_dims[2] > 1:
+                strides[2] = shift_spacing
 
-        if self.ei_mask_var is not None:
-            post = tf.multiply(tf.add(self.activation_func(pre), self.biases_var), self.ei_mask_var)
-        else:
-            post = tf.add(self.activation_func(pre), self.biases_var)
+            if binocular is False:
+                pre = tf.nn.conv2d( shaped_input, ws_conv, strides, padding='SAME' ) #, data_format="NCHW")
+            else:
+                NX = params_dict['input_dims'][1]/2
+                stimL = tf.slice( shaped_input, [0,0,0,0], [-1,NX,-1,-1] )
+                stimR = tf.slice( shaped_input, [0,NX,0,0], [-1,NX,-1,-1] )
+                pre = tf.concat(
+                    tf.nn.conv2d(stimL, ws_conv, strides, padding='SAME'),
+                    tf.nn.conv2d(stimR, ws_conv, strides, padding='SAME'))
 
-        self.outputs = tf.reshape(post, [-1, self.num_filters * num_shifts[0] * num_shifts[1]])
+            if self.ei_mask_var is not None:
+                post = tf.multiply(tf.add(self.activation_func(pre), self.biases_var), self.ei_mask_var)
+            else:
+                post = tf.add(self.activation_func(pre), self.biases_var)
+
+            self.outputs = tf.reshape(post, [-1, self.num_filters * num_shifts[0] * num_shifts[1]])
 
         if self.log:
             tf.summary.histogram('act_pre', pre)
             tf.summary.histogram('act_post', post)
     # END siLayer._build_layer
+
 
 class max_layer(Layer):
     """Implementation of layer which limits single weights along specified input dimension.
@@ -522,7 +511,6 @@ class max_layer(Layer):
     def __init__(
             self,
             scope=None,
-            inputs=None,
             input_dims=None,  # this can be a list up to 3-dimensions
             output_dims=None,
             activation_func='relu',
@@ -566,7 +554,6 @@ class max_layer(Layer):
 
         super(max_layer, self).__init__(
                 scope=scope,
-                inputs=inputs,
                 input_dims = input_dims,
                 output_dims = output_dims,
                 activation_func = activation_func,
@@ -578,38 +565,36 @@ class max_layer(Layer):
                 log_activations=log_activations )
 
         #print('max LAYER output: ',self.num_outputs)
-
     # END maxLayer.__init__
 
-    def _define_network( self, inputs, params_dict=None ):
-        # push data through max_layer
+    def build_graph( self, inputs, params_dict=None ):
 
-        # Reshape input and output to handle weights and shifts separately
-        num_shifts = self.input_dims[1]*self.input_dims[2]
-        num_input_filts = self.input_dims[0]
-        shaped_input = tf.transpose( tf.reshape( inputs, [-1,num_shifts,num_input_filts,1] ), perm=[1,2,0,3] )
+        # Define layer variables
+        with tf.name_scope(self.scope):
+            self._define_layer_variables()
 
-        if self.pos_constraint:
-            shaped_weights = tf.reshape(
-                tf.maximum(0.0, self.weights_var), [num_shifts, num_input_filts, 1, self.num_filters])
-        else:
-            shaped_weights = tf.reshape( self.weights_var, [num_shifts, num_input_filts, 1, self.num_filters] )
+            # Computation:
+            # Reshape input and output to handle weights and shifts separately
+            num_shifts = self.input_dims[1]*self.input_dims[2]
+            num_input_filts = self.input_dims[0]
+            shaped_input = tf.transpose( tf.reshape( inputs, [-1,num_shifts,num_input_filts,1] ), perm=[1,2,0,3] )
 
-        #print(shaped_weights)
-        #print(shaped_input)
-        #test = tf.matmul( shaped_input, shaped_weights )
-        #print('test', test)
+            if self.pos_constraint:
+                shaped_weights = tf.reshape(
+                    tf.maximum(0.0, self.weights_var), [num_shifts, num_input_filts, 1, self.num_filters])
+            else:
+                shaped_weights = tf.reshape( self.weights_var, [num_shifts, num_input_filts, 1, self.num_filters] )
 
-        pre_max_over_shifts = tf.reduce_max( tf.matmul(shaped_input,shaped_weights), axis=0 )
-        pre_sum_over_filters = tf.reduce_sum( pre_max_over_shifts, axis=0 )
-        pre = tf.add( pre_sum_over_filters, self.biases_var)
+            pre_max_over_shifts = tf.reduce_max( tf.matmul(shaped_input,shaped_weights), axis=0 )
+            pre_sum_over_filters = tf.reduce_sum( pre_max_over_shifts, axis=0 )
+            pre = tf.add( pre_sum_over_filters, self.biases_var)
 
-        if self.ei_mask_var is not None:
-            post = tf.multiply(self.activation_func(pre), self.ei_mask_var)
-        else:
-            post = self.activation_func(pre)
+            if self.ei_mask_var is not None:
+                post = tf.multiply(self.activation_func(pre), self.ei_mask_var)
+            else:
+                post = self.activation_func(pre)
 
-        self.outputs = post
+            self.outputs = post
 
         if self.log:
             tf.summary.histogram('act_pre', pre)
