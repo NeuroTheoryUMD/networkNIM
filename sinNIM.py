@@ -267,9 +267,10 @@ class siFFNetwork( FFNetwork ):
             layer_sizes[nn+1] = self.layers[nn].output_dims
 
         # Insert max layer if desired
-        if network_params['max_layer']:
+        if network_params['max_layer'] is not None:
             self.layers.append(
                 max_layer( scope='max_layer',
+                           max_layer_type=network_params['max_layer'],
                            input_dims=layer_sizes[num_conv_layers],
                            output_dims=layer_sizes[num_conv_layers+1],
                            activation_func=network_params['activation_funcs'][num_conv_layers],
@@ -511,6 +512,7 @@ class max_layer(Layer):
     def __init__(
             self,
             scope=None,
+            max_layer_type=2,
             input_dims=None,  # this can be a list up to 3-dimensions
             output_dims=None,
             activation_func='relu',
@@ -564,6 +566,7 @@ class max_layer(Layer):
                 pos_constraint=pos_constraint,
                 log_activations=log_activations )
 
+        self.max_type = max_layer_type
         #print('max LAYER output: ',self.num_outputs)
     # END maxLayer.__init__
 
@@ -585,9 +588,18 @@ class max_layer(Layer):
             else:
                 shaped_weights = tf.reshape( self.weights_var, [num_shifts, num_input_filts, 1, self.num_filters] )
 
-            pre_max_over_shifts = tf.reduce_max( tf.matmul(shaped_input,shaped_weights), axis=0 )
-            pre_sum_over_filters = tf.reduce_sum( pre_max_over_shifts, axis=0 )
-            pre = tf.add( pre_sum_over_filters, self.biases_var)
+            if self.max_type == 1:
+                pre_max_over_shifts = tf.reduce_max( tf.matmul(shaped_input,shaped_weights), axis=0 )
+                pre_max_over_filters = tf.reduce_max(pre_max_over_shifts, axis=0)
+                pre = tf.add(pre_max_over_filters, self.biases_var)
+            elif self.max_type == 2:
+                pre_max_over_shifts = tf.reduce_max( tf.matmul(shaped_input,shaped_weights), axis=0 )
+                pre_sum_over_filters = tf.reduce_sum( pre_max_over_shifts, axis=0 )
+                pre = tf.add( pre_sum_over_filters, self.biases_var)
+            else:
+                pre_max_over_filters = tf.reduce_max( tf.matmul(shaped_input,shaped_weights), axis=1 )
+                pre_sum_over_shifts = tf.reduce_sum( pre_max_over_filters, axis=0 )
+                pre = tf.add( pre_sum_over_shifts, self.biases_var)
 
             if self.ei_mask_var is not None:
                 post = tf.multiply(self.activation_func(pre), self.ei_mask_var)

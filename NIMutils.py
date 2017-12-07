@@ -12,7 +12,7 @@ def FFnetwork_params( stim_dims = None,
                       ffnet_n = None,
                       verbose = True,
                       num_conv_layers = 0, # the below are for convolutional network (SIN-NIM)
-                      max_layer = True,
+                      max_layer = None,
                       conv_filter_widths = None,
                       shift_spacing = 1,
                       binocular = False ):
@@ -31,7 +31,11 @@ def FFnetwork_params( stim_dims = None,
       -> ffnet_n: internal network that received input from (has to be None if xstim_n is used)
       This function can also add parameters specific to the SinNIM if num_conv_layers > 0
       -> conv_layers: number of convolutional layers
-      -> max_layer: whether the layer following the convolution is a max-layer
+      -> max_layer: whether the layer following the convolution is a max-layer. None [default] means it is not,
+            and otherwise specify type:
+             1 = max over all filters and shifts
+             2 = max over shifts only (but sum over filters)
+             3 = max over filters only (but sum over shifts)
       -> first_filter_width: spatial dimension of filter (if different than stim_dims)
       -> shift_spacing: how much shift in between each convolutional operation
     """
@@ -53,9 +57,13 @@ def FFnetwork_params( stim_dims = None,
             stim_dims.append(1)
 
     if xstim_n is not None:
-        assert ffnet_n is None, 'Can only assign non-None value to ffnet_n or xstim_n, but not both.'
+        if not isinstance(xstim_n, list):
+            xstim_n = [xstim_n]
     else:
         assert ffnet_n is not None, 'Must assign some input source.'
+    if ffnet_n is not None:
+        if not isinstance(ffnet_n, list):
+            ffnet_n = [ffnet_n]
 
     # Build layer_sizes and ei_layers
     layer_sizes = [stim_dims] + hidden_layers + [num_neurons]
@@ -98,6 +106,9 @@ def FFnetwork_params( stim_dims = None,
     # if convolutional, add the following SinNIM-specific fields
     if num_conv_layers > 0:
         network_params['num_conv_layers'] = num_conv_layers
+
+        if max_layer is not None:
+            assert max_layer in [1,2,3], 'max_layer must specify types 1-3. 1 = max over all, 2 = max over shifts, ...'
         network_params['max_layer'] = max_layer
 
         if not isinstance(conv_filter_widths,list):
