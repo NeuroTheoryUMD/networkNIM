@@ -207,7 +207,7 @@ class NetworkNIM(Network):
         if self.noise_dist == 'gaussian':
             with tf.name_scope('gaussian_loss'):
                 # should variable 'cost' be defined here too?
-                cost = tf.nn.l2_loss(data_out - pred) / pred.shape[0]
+                cost = tf.nn.l2_loss(data_out - pred) 
                 self.unit_cost = tf.reduce_mean(tf.square(data_out-pred), axis=0)
 
         elif self.noise_dist == 'poisson':
