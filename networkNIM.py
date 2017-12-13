@@ -212,7 +212,7 @@ class NetworkNIM(Network):
 
         elif self.noise_dist == 'poisson':
             with tf.name_scope('poisson_loss'):
-                cost_norm = tf.reduce_sum(data_out, axis=0)
+                cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
                 cost = -tf.reduce_sum( tf.divide(
                     tf.multiply(data_out,tf.log(self._log_min + pred)) - pred,
                     cost_norm ) )
@@ -222,6 +222,7 @@ class NetworkNIM(Network):
         elif self.noise_dist == 'bernoulli':
             with tf.name_scope('bernoulli_loss'):
                 # Check per-cell normalization with cross-entropy
+                cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
                 cost = tf.reduce_mean(
                     tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred) )
                 self.unit_cost = tf.reduce_mean(
@@ -241,6 +242,7 @@ class NetworkNIM(Network):
         # save summary of cost
         with tf.variable_scope('summaries'):
             tf.summary.scalar('cost', cost)
+    # END NetworkNIM._define_loss
 
     def _assign_model_params(self, sess):
         """Functions assigns parameter values to randomly initialized model"""

@@ -167,54 +167,52 @@ class metaNIM(Network):
             self.init = tf.global_variables_initializer()
 
     def _define_loss(self):
-        """Loss function that will be used to optimize model parameters
-        Current not handling more than one output"""
+        """Loss function that will be used to optimize model parameters"""
 
-        with tf.name_scope('loss_function'):
-            self.cost = 0
-            self.unit_cost = 0
-            for nn in range(len(self.ffnet_out)):
-                data_out = self.data_out_batch[nn]
-                pred = self.networks[self.ffnet_out[nn]].layers[-1].outputs
+        data_out = self.data_out_batch[0]
+        pred = self.network.layers[-1].outputs
 
-                if self.noise_dist == 'gaussian':
-                    #with tf.name_scope('gaussian_loss'):
-                    cost = tf.nn.l2_loss(data_out - pred)
-                    unit_cost = tf.reduce_mean(tf.square(data_out - pred), axis=0)
-                    # cost = tf.reduce_sum(self.unit_cost) # make two separate calculations
+        # define cost function
+        cost = 0.0
+        if self.noise_dist == 'gaussian':
+            with tf.name_scope('gaussian_loss'):
+                # should variable 'cost' be defined here too?
+                cost = tf.nn.l2_loss(data_out - pred) / pred.shape[0]
+                self.unit_cost = tf.reduce_mean(tf.square(data_out-pred), axis=0)
 
-                elif self.noise_dist == 'poisson':
-                    #with tf.name_scope('poisson_loss'):
-                    cost = -tf.reduce_sum(
-                        tf.multiply(data_out, tf.log(self._log_min + pred)) - pred)
-                    unit_cost = -tf.reduce_sum(
-                        tf.multiply(data_out, tf.log(self._log_min + pred)) - pred, axis=0)
-                    # cost = tf.reduce_sum(self.unit_cost)
-                    # Normalize by number of spikes
-                    cost = tf.divide(cost, tf.reduce_sum(data_out))
+        elif self.noise_dist == 'poisson':
+            with tf.name_scope('poisson_loss'):
+                cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
+                cost = -tf.reduce_sum( tf.divide(
+                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred,
+                    cost_norm ) )
+                self.unit_cost = tf.divide( -tf.reduce_sum(
+                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred, axis=0), cost_norm )
 
-                elif self.noise_dist == 'bernoulli':
-                    #with tf.name_scope('bernoulli_loss'):
-                    cost = tf.reduce_mean(
-                        tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out, logits=pred))
-                    unit_cost = tf.reduce_mean(
-                        tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out, logits=pred), axis=0)
-                    # cost = tf.reduce_sum(self.unit_cost)
+        elif self.noise_dist == 'bernoulli':
+            with tf.name_scope('bernoulli_loss'):
+                # Check per-cell normalization with cross-entropy
+                cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
+                cost = tf.reduce_mean(
+                    tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred) )
+                self.unit_cost = tf.reduce_mean(
+                    tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred), axis=0 )
+                #cost = tf.reduce_sum(self.unit_cost)
+        else:
+            print('Cost function not supported.')
 
-                self.cost += cost
-                self.unit_cost += unit_cost
+        self.cost = cost
 
-        # Add regularization penalties
+        # add regularization penalties
         with tf.name_scope('regularization'):
-            self.cost_reg = 0
-            for nn in range(self.num_networks):
-                self.cost_reg += self.networks[nn].define_regularization_loss()
+            self.cost_reg = self.network.define_regularization_loss()
 
-            self.cost_penalized = tf.add(self.cost, self.cost_reg)
+        self.cost_penalized = tf.add(self.cost, self.cost_reg)
 
         # save summary of cost
         with tf.variable_scope('summaries'):
             tf.summary.scalar('cost', cost)
+    # END metaNIM._define_loss
 
     def _assign_model_params(self, sess):
         """Functions assigns parameter values to randomly initialized model"""
