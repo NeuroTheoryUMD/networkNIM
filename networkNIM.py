@@ -155,7 +155,6 @@ class NetworkNIM(Network):
         self.network = FFNetwork( scope = 'FFNetwork',
                                   params_dict = network_params )
 
-
     def build_graph(self):
 
         # for saving and restoring models
@@ -204,30 +203,34 @@ class NetworkNIM(Network):
         pred = self.network.layers[-1].outputs
 
         # define cost function
+        cost = 0.0
         if self.noise_dist == 'gaussian':
             with tf.name_scope('gaussian_loss'):
                 # should variable 'cost' be defined here too?
-                cost = tf.nn.l2_loss(data_out - pred)
+                cost = tf.nn.l2_loss(data_out - pred) / pred.shape[0]
                 self.unit_cost = tf.reduce_mean(tf.square(data_out-pred), axis=0)
-                #cost = tf.reduce_sum(self.unit_cost) # make two separate calculations
-                self.cost = cost
+
         elif self.noise_dist == 'poisson':
             with tf.name_scope('poisson_loss'):
-                cost = -tf.reduce_sum(
-                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred )
-                self.unit_cost = -tf.reduce_sum(
-                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred, axis=0)
-                #cost = tf.reduce_sum(self.unit_cost)
-                # normalize by number of spikes
-                self.cost = tf.divide(cost, tf.reduce_sum(data_out))
+                cost_norm = tf.reduce_sum(data_out, axis=0)
+                cost = -tf.reduce_sum( tf.divide(
+                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred,
+                    cost_norm ) )
+                self.unit_cost = tf.divide( -tf.reduce_sum(
+                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred, axis=0), cost_norm )
+
         elif self.noise_dist == 'bernoulli':
             with tf.name_scope('bernoulli_loss'):
+                # Check per-cell normalization with cross-entropy
                 cost = tf.reduce_mean(
                     tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred) )
                 self.unit_cost = tf.reduce_mean(
                     tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred), axis=0 )
                 #cost = tf.reduce_sum(self.unit_cost)
-                self.cost = cost
+        else:
+            print('Cost function not supported.')
+
+        self.cost = cost
 
         # add regularization penalties
         with tf.name_scope('regularization'):
@@ -263,9 +266,13 @@ class NetworkNIM(Network):
         return var_list
     # END NetworkNIM._generate_variable_list
 
-    def set_fit_variables(self, layers_to_skip=None, fit_biases=False):
+    def variables_to_fit(self, layers_to_skip=None, fit_biases=False):
         """Generates a list-of-lists-of-lists of correct format to specify all the
-        variables to fit, as an argument for network.train"""
+        variables to fit, as an argument for network.train
+
+        Args:
+            layers_to_skip: [default=None] This is a list of layers to not fit variables
+            fit_biases: [default=False] Whether to default not fit biases"""
 
         if layers_to_skip is None:
             layers_to_skip = []
