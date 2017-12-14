@@ -207,7 +207,7 @@ class NetworkNIM(Network):
         if self.noise_dist == 'gaussian':
             with tf.name_scope('gaussian_loss'):
                 # should variable 'cost' be defined here too?
-                cost = tf.nn.l2_loss(data_out - pred) 
+                cost = tf.nn.l2_loss(data_out - pred)
                 self.unit_cost = tf.reduce_mean(tf.square(data_out-pred), axis=0)
 
         elif self.noise_dist == 'poisson':
@@ -347,7 +347,7 @@ class NetworkNIM(Network):
             return cost
     # END get_LL
 
-    def eval_models(self, input_data, output_data, data_indxs=None):
+    def eval_models(self, input_data, output_data, data_indxs=None, nulladjusted=False):
         """Get cost for each output neuron without regularization terms
 
         Args:
@@ -377,8 +377,31 @@ class NetworkNIM(Network):
             self._restore_params(sess, input_data, output_data)
             LL_neuron = sess.run(self.unit_cost, feed_dict={self.indices: data_indxs})
 
+            if nulladjusted:
+                # note that LL_neuron is negative of the true LL, but nullLL is not (so + is actually subtraction)
+                LL_neuron += self.nullLL(output_data[data_indxs, :])
+
             return LL_neuron
     # END get_LL_neuron
+
+    def nullLL(self, Robs ):
+        """Calculates null-model (constant firing rate) likelihood, given Robs (which determines
+        what firing rate for each cell)"""
+
+        if self.noise_dist == 'gaussian':
+            # In this case, LLnull is just var of data
+            LLnulls = np.var(Robs, axis=0)
+
+        elif self.noise_dist == 'poisson':
+            rbars = np.mean(Robs, axis=0)
+            LLnulls = np.log(rbars)-1
+            # elif self.noise_dist == 'bernoulli':
+        else:
+            LLnulls = [0]*Robs.shape[1]
+            print('Not worked out yet')
+
+        return LLnulls
+    # END NetworkNIM.nullLL
 
     def generate_prediction(self, input_data, data_indxs=None, layer=-1 ):
 
