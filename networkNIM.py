@@ -59,17 +59,12 @@ class NetworkNIM(Network):
     """
 
     _allowed_noise_dists = ['gaussian', 'poisson', 'bernoulli']
-    _allowed_learning_algs = ['adam', 'lbfgs']
 
     def __init__(
             self,
             network_params,
             noise_dist='poisson',
-            learning_alg='lbfgs',
-            learning_rate=1e-3,
-            use_batches=False,
-            tf_seed=0,
-            use_gpu=None ):
+            tf_seed=0 ):
         """Constructor for network-NIM class
 
         Args:
@@ -78,20 +73,9 @@ class NetworkNIM(Network):
                 -> layer_sizes (list of integers, or 3-d lists of integers)
                 -> activation_funcs (list of strings)
                 -> pos_constraints (list of Booleans)
-            num_examples (int): total number of examples in training data
             noise_dist (str, optional): noise distribution used by network
                 ['gaussian'] | 'poisson' | 'bernoulli'
-            learning_alg (str, optional): algorithm used for learning
-                parameters. 
-                ['lbfgs'] | 'adam'
-            learning_rate (float, optional): learning rate used by the 
-                gradient descent-based optimizers ('adam'). Default is 1e-3.
-            use_batches (boolean, optional): determines how data is fed to
-                model; if False, all data is pinned to variables used 
-                throughout fitting; if True, a data slicer and batcher are 
-                constructed to feed the model shuffled batches throughout 
-                training
-            tf_seed (scalar): rng seed for tensorflow to facilitate building 
+            tf_seed (scalar): rng seed for tensorflow to facilitate building
                 reproducible models
             use_gpu (bool): use gpu for training model
 
@@ -134,10 +118,6 @@ class NetworkNIM(Network):
         self.num_layers = len(network_params['layer_sizes'])-1
         self.activation_functions = network_params['activation_funcs']
         self.noise_dist = noise_dist
-        self.learning_alg = learning_alg
-        self.learning_rate = learning_rate
-        self.use_batches = use_batches
-        self.use_gpu = use_gpu
         self.tf_seed = tf_seed
 
         self._define_network( network_params )
@@ -155,7 +135,7 @@ class NetworkNIM(Network):
         self.network = FFNetwork( scope = 'FFNetwork',
                                   params_dict = network_params )
 
-    def build_graph(self):
+    def build_graph(self, learning_alg='adam', learning_rate=1e-3 ):
 
         # for saving and restoring models
         self.graph = tf.Graph()  # must be initialized before graph creation
@@ -186,7 +166,7 @@ class NetworkNIM(Network):
 
             # Define optimization routine
             with tf.variable_scope('optimizer'):
-                self._define_optimizer()
+                self._define_optimizer( learning_alg, learning_rate )
 
             # add additional ops
             # for saving and restoring models (initialized after var creation)

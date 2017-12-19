@@ -247,7 +247,7 @@ class siFFNetwork( FFNetwork ):
                 conv_filter_size = [layer_sizes[nn][0],conv_filter_widths[nn],1]
                 if layer_sizes[nn][2] > 1:
                     conv_filter_size[2] = conv_filter_widths[nn]
-            print(conv_filter_size)
+
             self.layers.append(
                 siLayer( scope = 'conv_layer_%i' % nn,
                          filter_dims = conv_filter_size,

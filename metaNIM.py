@@ -18,23 +18,18 @@ class metaNIM(Network):
     """
 
     _allowed_noise_dists = ['gaussian', 'poisson', 'bernoulli']
-    _allowed_learning_algs = ['adam', 'lbfgs']
 
     def __init__(
             self,
             network_list,
             ffnet_out=-1,
             noise_dist='poisson',
-            learning_alg='lbfgs',
-            learning_rate=1e-3,
-            use_batches=False,
-            tf_seed=0,
-            use_gpu=None ):
+            tf_seed=0 ):
 
         """Constructor for network-NIM class
 
         Args:
-            network_params: created using 'createNIMparams', which has at least the following
+            network_list: created using 'FFNetwork_params', which has at least the following
         """
 
         # input checking
@@ -59,10 +54,6 @@ class metaNIM(Network):
         self.input_size = [0]  # list of input sizes (for stimulus placeholders)
         self.output_size = [0]  # list of output sizes (for Robs placeholders)
         self.noise_dist = noise_dist
-        self.learning_alg = learning_alg
-        self.learning_rate = learning_rate
-        self.use_batches = use_batches
-        self.use_gpu = use_gpu
         self.tf_seed = tf_seed
 
         self._define_network(network_list)
@@ -108,7 +99,7 @@ class metaNIM(Network):
 
     # END metaNIM._define_network
 
-    def build_graph(self):
+    def build_graph(self, learning_alg='adam', learning_rate=1e-3 ):
 
         # Check number of input streams
         # for saving and restoring models
@@ -156,7 +147,7 @@ class metaNIM(Network):
 
             # Define optimization routine
             with tf.variable_scope('optimizer'):
-                self._define_optimizer()
+                self._define_optimizer( learning_alg, learning_rate )
 
             # add additional ops
             # for saving and restoring models (initialized after var creation)
@@ -169,43 +160,46 @@ class metaNIM(Network):
     def _define_loss(self):
         """Loss function that will be used to optimize model parameters"""
 
-        data_out = self.data_out_batch[0]
-        pred = self.network.layers[-1].outputs
-
-        # define cost function
         cost = 0.0
-        if self.noise_dist == 'gaussian':
-            with tf.name_scope('gaussian_loss'):
-                # should variable 'cost' be defined here too?
-                cost = tf.nn.l2_loss(data_out - pred) / pred.shape[0]
-                self.unit_cost = tf.reduce_mean(tf.square(data_out-pred), axis=0)
+        for nn in range(len(self.ffnet_out)):
+            data_out = self.data_out_batch[0]
+            pred = self.networks[nn].layers[-1].outputs
 
-        elif self.noise_dist == 'poisson':
-            with tf.name_scope('poisson_loss'):
-                cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
-                cost = -tf.reduce_sum( tf.divide(
-                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred,
-                    cost_norm ) )
-                self.unit_cost = tf.divide( -tf.reduce_sum(
-                    tf.multiply(data_out,tf.log(self._log_min + pred)) - pred, axis=0), cost_norm )
+            # define cost function
+            if self.noise_dist == 'gaussian':
+                with tf.name_scope('gaussian_loss'):
+                    # should variable 'cost' be defined here too?
+                    cost += tf.nn.l2_loss(data_out - pred) / pred.shape[0]
+                    self.unit_cost = tf.reduce_mean(tf.square(data_out-pred), axis=0)
 
-        elif self.noise_dist == 'bernoulli':
-            with tf.name_scope('bernoulli_loss'):
-                # Check per-cell normalization with cross-entropy
-                cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
-                cost = tf.reduce_mean(
-                    tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred) )
-                self.unit_cost = tf.reduce_mean(
-                    tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred), axis=0 )
-                #cost = tf.reduce_sum(self.unit_cost)
-        else:
-            print('Cost function not supported.')
+            elif self.noise_dist == 'poisson':
+                with tf.name_scope('poisson_loss'):
+                    cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
+                    cost += -tf.reduce_sum( tf.divide(
+                        tf.multiply(data_out,tf.log(self._log_min + pred)) - pred,
+                        cost_norm ) )
+                    self.unit_cost = tf.divide( -tf.reduce_sum(
+                        tf.multiply(data_out,tf.log(self._log_min + pred)) - pred, axis=0), cost_norm )
+
+            elif self.noise_dist == 'bernoulli':
+                with tf.name_scope('bernoulli_loss'):
+                    # Check per-cell normalization with cross-entropy
+                    cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
+                    cost += tf.reduce_mean(
+                        tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred) )
+                    self.unit_cost = tf.reduce_mean(
+                        tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred), axis=0 )
+                    #cost = tf.reduce_sum(self.unit_cost)
+            else:
+                print('Cost function not supported.')
 
         self.cost = cost
 
         # add regularization penalties
+        self.cost_reg = 0
         with tf.name_scope('regularization'):
-            self.cost_reg = self.network.define_regularization_loss()
+            for nn in range(self.num_networks):
+                self.cost_reg += self.networks[nn].define_regularization_loss()
 
         self.cost_penalized = tf.add(self.cost, self.cost_reg)
 
