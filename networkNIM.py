@@ -135,17 +135,16 @@ class NetworkNIM(Network):
         self.network = FFNetwork( scope = 'FFNetwork',
                                   params_dict = network_params )
 
-    def build_graph(self, learning_alg='adam', learning_rate=1e-3 ):
+    def _build_graph(self, learning_alg='adam', learning_rate=1e-3, use_gpu=False ):
 
         # for saving and restoring models
         self.graph = tf.Graph()  # must be initialized before graph creation
 
         # for specifying device
-        if self.use_gpu is not None:
-            if self.use_gpu:
-                self.sess_config = tf.ConfigProto(device_count={'GPU': 1})
-            else:
-                self.sess_config = tf.ConfigProto(device_count={'GPU': 0})
+        if use_gpu:
+            self.sess_config = tf.ConfigProto(device_count={'GPU': 1})
+        else:
+            self.sess_config = tf.ConfigProto(device_count={'GPU': 0})
 
         # build model graph
         with self.graph.as_default():

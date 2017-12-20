@@ -46,13 +46,13 @@ class metaNIM(Network):
         self.network_list = network_list
         self.num_input_streams = 0
         self.num_networks = len(network_list)
-        if not isinstance(ffnet_out,list):
+        if not isinstance(ffnet_out, list):
             ffnet_out = [ffnet_out]
         for nn in range(len(ffnet_out)):
-            assert ffnet_out[nn] <= self.num_networks
+            assert ffnet_out[nn] <= self.num_networks, 'ffnet_out has values that are too big'
         self.ffnet_out = ffnet_out
         self.input_size = [0]  # list of input sizes (for stimulus placeholders)
-        self.output_size = [0]  # list of output sizes (for Robs placeholders)
+        self.output_size = [0]*len(ffnet_out)  # list of output sizes (for Robs placeholders)
         self.noise_dist = noise_dist
         self.tf_seed = tf_seed
 
@@ -99,18 +99,17 @@ class metaNIM(Network):
 
     # END metaNIM._define_network
 
-    def build_graph(self, learning_alg='adam', learning_rate=1e-3 ):
+    def _build_graph(self, learning_alg='lbfgs', learning_rate=1e-3, use_gpu=False):
 
-        # Check number of input streams
-        # for saving and restoring models
+        # Check number of input streams for saving and restoring models
+
         self.graph = tf.Graph()  # must be initialized before graph creation
 
         # for specifying device
-        if self.use_gpu is not None:
-            if self.use_gpu:
-                self.sess_config = tf.ConfigProto(device_count={'GPU': 1})
-            else:
-                self.sess_config = tf.ConfigProto(device_count={'GPU': 0})
+        if use_gpu:
+            self.sess_config = tf.ConfigProto(device_count={'GPU': 1})
+        else:
+            self.sess_config = tf.ConfigProto(device_count={'GPU': 0})
 
         # build model graph
         with self.graph.as_default():
@@ -160,40 +159,41 @@ class metaNIM(Network):
     def _define_loss(self):
         """Loss function that will be used to optimize model parameters"""
 
-        cost = 0.0
+        cost = []
+        self.unit_cost = []
         for nn in range(len(self.ffnet_out)):
-            data_out = self.data_out_batch[0]
-            pred = self.networks[nn].layers[-1].outputs
-
+            data_out = self.data_out_batch[nn]
+            pred = self.networks[self.ffnet_out[nn]].layers[-1].outputs
             # define cost function
             if self.noise_dist == 'gaussian':
                 with tf.name_scope('gaussian_loss'):
                     # should variable 'cost' be defined here too?
-                    cost += tf.nn.l2_loss(data_out - pred) / pred.shape[0]
-                    self.unit_cost = tf.reduce_mean(tf.square(data_out-pred), axis=0)
+                    cost.append( tf.nn.l2_loss(data_out - pred) / self.num_examples )
+                    self.unit_cost = tf.concat(
+                        [self.unit_cost, tf.reduce_mean(tf.square(data_out-pred), axis=0)], 0 )
 
             elif self.noise_dist == 'poisson':
                 with tf.name_scope('poisson_loss'):
                     cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
-                    cost += -tf.reduce_sum( tf.divide(
+                    cost.append( -tf.reduce_sum( tf.divide(
                         tf.multiply(data_out,tf.log(self._log_min + pred)) - pred,
-                        cost_norm ) )
-                    self.unit_cost = tf.divide( -tf.reduce_sum(
-                        tf.multiply(data_out,tf.log(self._log_min + pred)) - pred, axis=0), cost_norm )
+                        cost_norm ) ) )
+                    self.unit_cost = tf.concat( [self.unit_cost, tf.divide( -tf.reduce_sum(
+                        tf.multiply(data_out,tf.log(self._log_min + pred)) - pred, axis=0), cost_norm )], 0 )
 
             elif self.noise_dist == 'bernoulli':
                 with tf.name_scope('bernoulli_loss'):
                     # Check per-cell normalization with cross-entropy
-                    cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
-                    cost += tf.reduce_mean(
-                        tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred) )
-                    self.unit_cost = tf.reduce_mean(
-                        tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred), axis=0 )
+                    #cost_norm = tf.maximum( tf.reduce_sum(data_out, axis=0), 1)
+                    cost.append( tf.reduce_mean(
+                        tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred) ) )
+                    self.unit_cost = tf.concat( [self.unit_cost, tf.reduce_mean(
+                        tf.nn.sigmoid_cross_entropy_with_logits(labels=data_out,logits=pred), axis=0 )], 0 )
                     #cost = tf.reduce_sum(self.unit_cost)
             else:
                 print('Cost function not supported.')
 
-        self.cost = cost
+        self.cost = tf.add_n(cost)
 
         # add regularization penalties
         self.cost_reg = 0
@@ -416,91 +416,22 @@ class metaNIM(Network):
             self._assign_reg_vals(sess)
 
             with tf.name_scope('get_reg_pen'):  # to keep the graph clean-ish
-                for layer in range(self.network.num_layers):
-                    reg_dict['layer%i' % layer] = \
-                        self.network.layers[layer].get_reg_pen(sess)
+                for nn in range(self.num_networks):
+                    for layer in range(self.networks[nn].num_layers):
+                        reg_dict['net%iL%i' % nn, layer] = \
+                            self.networks[nn].layers[layer].get_reg_pen(sess)
 
         return reg_dict
 
     # END get_reg_pen
 
 
-    def copy_model(self, alternate_network_params=None, target=None,
-                   layers_to_transfer=None,
-                   target_layers=None,
-                   init_type='trunc_normal', tf_seed=0):
+    def copy_model(self, tf_seed=0):
+        """For the moment, this just makes exact-copy without further elaboration."""
 
-        num_layers = len(self.network.layers)
-        if target is None:
-            # Make new target
-            target = self.create_NIM_copy(init_type=init_type, tf_seed=tf_seed,
-                                          alternate_network_params=alternate_network_params)
-
-        # Figure out mapping from self.layers to target.layers
-        num_layers_target = len(target.network.layers)
-        if layers_to_transfer is not None:
-            assert max(layers_to_transfer) <= num_layers, 'Too many layers to transfer.'
-            if target_layers is None:
-                assert len(layers_to_transfer) <= num_layers_target, 'Too many layers to transfer.'
-                target_layers = range(len(layers_to_transfer))
-        if target_layers is not None:
-            assert max(target_layers) <= num_layers_target, 'Too many layers for target.'
-            if layers_to_transfer is None:
-                assert len(target_layers) <= num_layers, 'Too many target layers.'
-                layers_to_transfer = range(len(target_layers))
-        if num_layers >= num_layers_target:
-            target_copy = range(num_layers_target)
-            if target_layers is None:
-                self_copy = target_copy  # then default is copy the top_most layers
-            else:
-                self_copy = target_layers
-        else:
-            self_copy = range(num_layers)
-            if target_layers is None:
-                target_copy = self_copy  # then default is copy the top_most layers
-            else:
-                target_copy = target_layers
-        assert len(target_copy) == len(self_copy), 'Number of targets and transfers must match.'
-
-        # Copy information from self to new target NIM
-        for nn in range(len(self_copy)):
-            self_layer = self.network.layers[self_copy[nn]]
-            tar = target_copy[nn]
-            self_num_outputs = self_layer.output_dims[0] * self_layer.output_dims[1] * self_layer.output_dims[2]
-            tar_num_outputs = target.network.layers[tar].output_dims[0] \
-                              * target.network.layers[tar].output_dims[1] * target.network.layers[tar].output_dims[2]
-
-            # Copy remaining layer properties
-            target.network.layers[tar].ei_mask = self_layer.ei_mask
-
-            if self_num_outputs <= tar_num_outputs:
-                target.network.layers[tar].weights[:, 0:self_num_outputs] \
-                    = self_layer.weights
-                target.network.layers[tar].biases[0:self_num_outputs] \
-                    = self_layer.biases
-            else:
-                target.network.layers[tar].weights = \
-                    self_layer.weights[:, 0:tar_num_outputs]
-                target.network.layers[tar].biases = \
-                    self_layer.biases[0:tar_num_outputs]
-
+        # Assemble network_list
+        target = metaNIM( self.network_list, ffnet_out=self.ffnet_out,
+                          noise_dist=self.noise_dist, tf_seed=tf_seed )
         return target
 
     # END make_copy
-
-    def create_NIM_copy(self, init_type=None, tf_seed=None, alternate_network_params=None):
-
-        if alternate_network_params is not None:
-            network_params = alternate_network_params
-        else:
-            network_params = self.network_params
-
-        target = metaNIM(network_params,
-                            noise_dist=self.noise_dist,
-                            learning_alg=self.learning_alg,
-                            learning_rate=self.learning_rate,
-                            use_batches=self.use_batches,
-                            tf_seed=tf_seed,
-                            use_gpu=self.use_gpu)
-        return target
-        # END metaNIM.create_new_NIM
