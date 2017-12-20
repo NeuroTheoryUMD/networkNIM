@@ -1,4 +1,4 @@
-"""metaNIM"""
+"""Neural deep network"""
 
 from __future__ import print_function
 from __future__ import division
@@ -10,7 +10,7 @@ from FFnetwork.ffnetwork import FFNetwork
 from FFnetwork.network import Network
 
 
-class metaNIM(Network):
+class NDN(Network):
     """Tensorflow (tf) implementation of network-NIM class
 
     Attributes:
@@ -37,7 +37,7 @@ class metaNIM(Network):
         #    raise ValueError('Must specify number of training examples')
 
         # call __init__() method of super class
-        super(metaNIM, self).__init__()
+        super(NDN, self).__init__()
 
         if not isinstance( network_list, list ):
             network_list = [network_list]
@@ -97,7 +97,7 @@ class metaNIM(Network):
         #print('num_inputs = ', self.input_size)
         #print('num_outputs = ', self.output_size)
 
-    # END metaNIM._define_network
+    # END NDN._define_network
 
     def _build_graph(self, learning_alg='lbfgs', learning_rate=1e-3, use_gpu=False):
 
@@ -206,7 +206,7 @@ class metaNIM(Network):
         # save summary of cost
         with tf.variable_scope('summaries'):
             tf.summary.scalar('cost', cost)
-    # END metaNIM._define_loss
+    # END NDN._define_loss
 
     def _assign_model_params(self, sess):
         """Functions assigns parameter values to randomly initialized model"""
@@ -235,7 +235,7 @@ class metaNIM(Network):
             for nn in range(self.num_networks):
                 var_list += self.networks[nn]._build_fit_variable_list( fit_parameter_list[nn] )
         return var_list
-    # END metaNIM._generate_variable_list
+    # END NDN._generate_variable_list
 
     def variables_to_fit(self, layers_to_skip=None, fit_biases=False):
         """Generates a list-of-lists-of-lists of correct format to specify all the
@@ -271,7 +271,7 @@ class metaNIM(Network):
                         fit_list[nn][layer]['biases'] = False
 
         return fit_list
-        # END metaNIM.set_fit_variables
+        # END NDN.set_fit_variables
 
     def set_regularization(self, reg_type, reg_val, ffnet_n=0, layer_target=None):
         """Add or reassign regularization values
@@ -430,8 +430,8 @@ class metaNIM(Network):
         """For the moment, this just makes exact-copy without further elaboration."""
 
         # Assemble network_list
-        target = metaNIM( self.network_list, ffnet_out=self.ffnet_out,
+        target = NDN( self.network_list, ffnet_out=self.ffnet_out,
                           noise_dist=self.noise_dist, tf_seed=tf_seed )
         return target
 
-    # END make_copy
+    # END NDN.copy_model

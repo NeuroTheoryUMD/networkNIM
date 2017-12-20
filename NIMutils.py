@@ -3,8 +3,7 @@ import numpy as np
 from scipy.linalg import toeplitz
 
 def FFnetwork_params( stim_dims = None,
-                      num_neurons = None,
-                      hidden_layers = None,
+                      layer_sizes = None,
                       ei_layers = None,
                       act_funcs = 'relu',
                       reg_list = None,
@@ -19,10 +18,11 @@ def FFnetwork_params( stim_dims = None,
     """This generates the information for the network_params dictionary that is passed into
     the constructor for the NetworkNIM. It has the following input arguments:
       -> stim_dims
-      -> num_neurons
-      -> ei_layers: if this is not none, it should be a list of # of inhibitory units for each hidden layer.
-            All the non-inhibitory units are of course excitatory, and having None for a layer means it will
-            be unrestricted.
+      -> layer_sizes: list of number of subunits in each layer of network. Last layer should match number of
+            neurons (Robs). Each entry can be a 3-d list, if there is a spatio-filter/temporal arrangement.
+      -> ei_layers: if this is not none, it should be a list of # of inhibitory units for each layer other than
+            the output_layer: so list should be of length one-less than layer_sizes. All the non-inhibitory units
+            are of course excitatory, and having 'None' for a layer means it will be unrestricted.
       -> act_funcs: (str or list of strs, optional): activation function for network layers; replicated if a
             single element.
             ['relu'] | 'sigmoid' | 'tanh' | 'identity' | 'softplus' | 'elu' | 'quad' | 'lin'
@@ -40,13 +40,11 @@ def FFnetwork_params( stim_dims = None,
       -> shift_spacing: how much shift in between each convolutional operation
     """
 
-    if num_neurons is None:
-        raise TypeError('Must specify number of neurons.')
-    if hidden_layers is None:
-        hidden_layers = []
+    if layer_sizes is None:
+        raise TypeError('Must specify layer_sizes.')
     if ei_layers is not None:
-        assert len(ei_layers) == len(hidden_layers), \
-            'ei_layers must be a list the same size as hidden_layers'
+        assert len(ei_layers) == (len(layer_sizes)-1), \
+            'ei_layers must be a list one less than the number of layers (in layer_sizes)'
     if stim_dims is None:
         raise TypeError('Must specify stimulus dimensions')
     if not isinstance(stim_dims, list):
@@ -66,7 +64,7 @@ def FFnetwork_params( stim_dims = None,
             ffnet_n = [ffnet_n]
 
     # Build layer_sizes and ei_layers
-    layer_sizes = [stim_dims] + hidden_layers + [num_neurons]
+    layer_sizes = [stim_dims] + layer_sizes
 
     # Establish positivity constraints
     num_layers = len(layer_sizes) - 1
